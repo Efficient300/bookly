@@ -1,82 +1,78 @@
-import { useEffect, useState } from 'react';
-import { BUDGET_LABELS, DURATION_LABELS, FORMAT_LABELS, budgetLabel, daysRangeLabel, plural } from '../../../shared/format.ts';
+import { useState } from 'react';
+import { BUDGET_LABELS, DURATION_LABELS, FORMAT_LABELS, daysRangeLabel } from '../../../shared/format.ts';
 import type { Budget, Duration, Format, NewPlace, NewPlan } from '../../../shared/types.ts';
 import { api, enableReminders } from '../api.ts';
-import { IconArrowRight, IconSend } from '../components/icons.tsx';
+import { PlanCover } from '../components/PlanCover.tsx';
+import { IconChevron, IconSend } from '../components/icons.tsx';
 import { MonthCalendar } from '../components/MonthCalendar.tsx';
 import { PlacePicker, emptyPlace, placePoint } from '../components/PlacePicker.tsx';
-import { BottomBar, MainButton, Segmented, ToggleRow, useToast } from '../components/ui.tsx';
+import { BottomBar, MainButton, Segmented, SelectRow, useToast } from '../components/ui.tsx';
 import { weekend } from '../lib/links.ts';
+import { FORMAT_THEME } from '../lib/themes.tsx';
 import { useNav } from '../nav.tsx';
 import { haptic, shareToChat } from '../telegram.ts';
 
 const TIMES = ['09:00', '11:00', '13:00', '15:00', '17:00', '19:00', '21:00'];
 /** Столько же разрешает сервер (server/app/plans.py). */
 const MAX_DAYS = 14;
-const DEADLINES = [
-  { value: '24', label: '24 часа' },
-  { value: '48', label: '2 дня' },
-  { value: 'none', label: 'Без срока' },
-] as const;
+const DEADLINES = { '24': '24 часа', '48': '2 дня', none: 'Без срока' } as const;
+type Deadline = keyof typeof DEADLINES;
+
+type PlaceMode = 'vote' | 'middle' | 'own';
+const PLACE_MODES: { value: PlaceMode; label: string }[] = [
+  { value: 'vote', label: 'Голосуем' },
+  { value: 'middle', label: 'Посередине' },
+  { value: 'own', label: 'Выберу я' },
+];
+const PLACE_HINTS: Record<PlaceMode, string> = {
+  vote: 'Участники отметят понравившиеся места и смогут предложить свои.',
+  middle: 'Участники укажут район, а вы выберете место посередине.',
+  own: 'Участники сразу увидят, куда идти.',
+};
 
 const opts = <T extends string>(labels: Record<T, string>) =>
   (Object.keys(labels) as T[]).map((value) => ({ value, label: labels[value] }));
 
+function modeOf(template?: Partial<NewPlan>): PlaceMode {
+  if (!template || template.votePlace) return 'vote';
+  return template.middle ? 'middle' : 'own';
+}
+
+/** Новая сходка на одном экране: всё заполнено заранее, менять нужно только то, что важно. */
 export function Create({ template, chatId }: { template?: Partial<NewPlan>; chatId?: number }) {
   const nav = useNav();
   const toast = useToast();
-  const [step, setStep] = useState(1);
   const [busy, setBusy] = useState(false);
+  const [open, setOpen] = useState<'days' | 'times' | null>(null);
 
-  const [title, setTitle] = useState(template?.title ?? 'Встреча на выходных');
+  const [title, setTitle] = useState(template?.title ?? '');
   const [format, setFormat] = useState<Format>(template?.format ?? 'eat');
   const [budget, setBudget] = useState<Budget>(template?.budget ?? '2');
   const [duration, setDuration] = useState<Duration>(template?.duration ?? '2-3');
   const [days, setDays] = useState<string[]>(template?.days ?? weekend());
   const [times, setTimes] = useState<string[]>(template?.times ?? ['17:00', '19:00', '21:00']);
-  const [deadline, setDeadline] = useState<(typeof DEADLINES)[number]['value']>('48');
-  const [votePlace, setVotePlace] = useState(template?.votePlace ?? true);
-  const [middle, setMiddle] = useState(template?.middle ?? true);
+  const [deadline, setDeadline] = useState<Deadline>('48');
+  const [mode, setMode] = useState<PlaceMode>(() => modeOf(template));
   const [place, setPlace] = useState<NewPlace>(template?.place ?? emptyPlace());
 
-  // Кнопка «Назад» Telegram на шагах 2–3 возвращает на предыдущий шаг.
-  useEffect(() => {
-    nav.setBackOverride(
-      step > 1
-        ? () => {
-            setStep((s) => s - 1);
-            return true;
-          }
-        : null,
-    );
-    return () => nav.setBackOverride(null);
-  }, [step, nav]);
-
-  useEffect(() => {
-    window.scrollTo(0, 0);
-  }, [step]);
-
-  const toggle = (list: string[], item: string) =>
-    list.includes(item) ? list.filter((x) => x !== item) : [...list, item].sort();
-
-  // Без голосования и без поиска середины место встречи называет организатор — сразу.
-  const needsPlace = !votePlace && !middle;
+  const needsPlace = mode === 'own';
   const placeReady = place.name.trim().length > 0 && placePoint(place) !== null;
-  const canNext = step === 1 ? title.trim().length > 0 : step === 2 ? days.length > 0 && times.length > 0 : true;
+  const ready = days.length > 0 && times.length > 0 && (!needsPlace || placeReady);
+  const toggleOpen = (section: 'days' | 'times') => setOpen(open === section ? null : section);
 
   async function submit() {
     setBusy(true);
     try {
       const { id, posted } = await api.create({
-        title: title.trim(),
+        title: title.trim() || FORMAT_LABELS[format],
         format,
         budget,
         duration,
         days,
         times,
         deadlineHours: deadline === 'none' ? null : Number(deadline),
-        votePlace,
-        middle,
+        votePlace: mode === 'vote',
+        middle: mode !== 'own',
         placeId: null,
         place: needsPlace ? { ...place, name: place.name.trim() } : null,
         chatId: chatId ?? null,
@@ -96,185 +92,115 @@ export function Create({ template, chatId }: { template?: Partial<NewPlan>; chat
 
   return (
     <div className="screen">
-      <div className="head" style={{ padding: '20px 20px 0', gap: 10 }}>
-        <div className="steps" aria-hidden="true">
-          {[1, 2, 3].map((s) => (
-            <span key={s} className={s <= step ? 'on' : ''} />
-          ))}
+      <main className="content">
+        <PlanCover format={format}>
+          <label className="sr-only" htmlFor="plan-title">
+            Название сходки
+          </label>
+          <input
+            id="plan-title"
+            className="cover-input"
+            value={title}
+            maxLength={80}
+            placeholder={FORMAT_LABELS[format]}
+            onChange={(e) => setTitle(e.target.value)}
+          />
+          <div className="cover-sub">Название можно не менять</div>
+        </PlanCover>
+
+        <div className="format-picker" role="group" aria-label="Формат">
+          {opts(FORMAT_LABELS).map((o) => {
+            const { Icon, from, to } = FORMAT_THEME[o.value];
+            return (
+              <button
+                key={o.value}
+                type="button"
+                className="format-item"
+                aria-pressed={format === o.value}
+                onClick={() => {
+                  haptic.select();
+                  setFormat(o.value);
+                }}
+              >
+                <span className="tile" style={{ background: `linear-gradient(145deg, ${from}, ${to})` }}>
+                  <Icon size={24} />
+                </span>
+                {o.label}
+              </button>
+            );
+          })}
         </div>
-        <div className="caption">Шаг {step} из 3</div>
-        <h1 className="h1">{step === 1 ? 'Что делаем?' : step === 2 ? 'Когда?' : 'Где?'}</h1>
-      </div>
 
-      <main className="content" style={{ gap: 22 }}>
-        {step === 1 && (
-          <>
-            <div className="field">
-              <label className="label" htmlFor="plan-title">
-                Название
-              </label>
-              <input id="plan-title" className="input" value={title} maxLength={80} onChange={(e) => setTitle(e.target.value)} />
-            </div>
-            <fieldset>
-              <legend className="label">Формат</legend>
-              <div className="chips">
-                {opts(FORMAT_LABELS).map((o) => (
-                  <button
-                    key={o.value}
-                    type="button"
-                    className="chip"
-                    aria-pressed={format === o.value}
-                    onClick={() => {
-                      haptic.select();
-                      setFormat(o.value);
-                    }}
-                  >
-                    {o.label}
+        <section className="section">
+          <h2 className="h2">Когда</h2>
+          <div className="list">
+            <button type="button" className="list-row" aria-expanded={open === 'days'} onClick={() => toggleOpen('days')}>
+              <span className="grow list-title">Дни</span>
+              <span className={days.length ? 'row-value' : 'row-value warn'}>{days.length ? daysRangeLabel(days) : 'Не выбраны'}</span>
+              <IconChevron size={16} className="row-chevron" />
+            </button>
+            {open === 'days' && (
+              <div className="list-panel">
+                <div className="chips">
+                  <button type="button" className="chip sm" onClick={() => setDays(weekend())}>
+                    Эти выходные
                   </button>
-                ))}
-              </div>
-            </fieldset>
-            <fieldset>
-              <legend className="label">Бюджет на человека, сум</legend>
-              <div className="chips">
-                {opts(BUDGET_LABELS).map((o) => (
-                  <button
-                    key={o.value}
-                    type="button"
-                    className="chip"
-                    aria-pressed={budget === o.value}
-                    onClick={() => {
-                      haptic.select();
-                      setBudget(o.value);
-                    }}
-                  >
-                    {o.label}
+                  <button type="button" className="chip sm" onClick={() => setDays(weekend(1))}>
+                    Следующие
                   </button>
-                ))}
-              </div>
-            </fieldset>
-            <fieldset>
-              <legend className="label">Сколько по времени</legend>
-              <Segmented label="Сколько по времени" options={opts(DURATION_LABELS)} value={duration} onChange={setDuration} />
-            </fieldset>
-          </>
-        )}
-
-        {step === 2 && (
-          <>
-            <fieldset>
-              <legend className="label">Дни</legend>
-              <div className="chips" style={{ marginBottom: 10 }}>
-                <button type="button" className="chip sm" onClick={() => setDays(weekend())}>
-                  Эти выходные
-                </button>
-                <button type="button" className="chip sm" onClick={() => setDays(weekend(1))}>
-                  Следующие
-                </button>
-                <button type="button" className="chip sm" onClick={() => setDays([])}>
-                  Сбросить
-                </button>
-              </div>
-              <MonthCalendar value={days} onChange={setDays} max={MAX_DAYS} onLimit={() => toast(`Можно выбрать до ${MAX_DAYS} дней`)} />
-              {days.length > 0 && (
-                <div className="caption" style={{ marginTop: 8 }}>
-                  Выбрано {days.length} {plural(days.length, ['день', 'дня', 'дней'])}: {daysRangeLabel(days)}
+                  <button type="button" className="chip sm" onClick={() => setDays([])}>
+                    Очистить
+                  </button>
                 </div>
-              )}
-            </fieldset>
-            <fieldset>
-              <legend className="label">Во сколько можно начать</legend>
-              <div className="chips">
-                {TIMES.map((t) => (
-                  <button
-                    key={t}
-                    type="button"
-                    className="chip sm"
-                    aria-pressed={times.includes(t)}
-                    onClick={() => {
-                      haptic.select();
-                      setTimes(toggle(times, t));
-                    }}
-                  >
-                    {t}
-                  </button>
-                ))}
+                <MonthCalendar value={days} onChange={setDays} max={MAX_DAYS} onLimit={() => toast(`Можно выбрать до ${MAX_DAYS} дней`)} />
               </div>
-            </fieldset>
-            <fieldset>
-              <legend className="label">Ответить до</legend>
-              <Segmented label="Ответить до" options={[...DEADLINES]} value={deadline} onChange={setDeadline} />
-            </fieldset>
-          </>
-        )}
-
-        {step === 3 && (
-          <>
-            <div className="list">
-              <ToggleRow
-                id="t-vote"
-                title="Место выберем голосованием"
-                hint="Каждый сможет предложить своё"
-                checked={votePlace}
-                onChange={setVotePlace}
-              />
-              <ToggleRow
-                id="t-middle"
-                title="Подобрать место посередине"
-                hint="Учтём, кому откуда ехать"
-                checked={middle}
-                onChange={setMiddle}
-              />
-            </div>
-            {needsPlace && (
-              <section className="section">
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                  <h2 className="h2">Где встречаемся</h2>
-                  <div className="caption">Найдите заведение или поставьте точку на карте.</div>
-                </div>
-                <PlacePicker id="meet" value={place} onChange={setPlace} format={format} />
-              </section>
             )}
-            <div className="card">
-              <div style={{ fontSize: 18, fontWeight: 600 }}>{title.trim() || 'Без названия'}</div>
-              <div className="caption">
-                {[FORMAT_LABELS[format], budgetLabel(budget), DURATION_LABELS[duration]]
-                  .filter(Boolean)
-                  .join(' · ')}
+            <button type="button" className="list-row" aria-expanded={open === 'times'} onClick={() => toggleOpen('times')}>
+              <span className="grow list-title">Время начала</span>
+              <span className={times.length ? 'row-value' : 'row-value warn'}>{times.length ? times.join(', ') : 'Не выбрано'}</span>
+              <IconChevron size={16} className="row-chevron" />
+            </button>
+            {open === 'times' && (
+              <div className="list-panel">
+                <div className="chips">
+                  {TIMES.map((t) => (
+                    <button
+                      key={t}
+                      type="button"
+                      className="chip sm"
+                      aria-pressed={times.includes(t)}
+                      onClick={() => {
+                        haptic.select();
+                        setTimes(times.includes(t) ? times.filter((x) => x !== t) : [...times, t].sort());
+                      }}
+                    >
+                      {t}
+                    </button>
+                  ))}
+                </div>
               </div>
-              <div className="caption">
-                {daysRangeLabel(days)} · {times.join(', ')}
-              </div>
-              {needsPlace && place.name.trim() && <div className="caption">{place.name.trim()}</div>}
-            </div>
-            <p className="caption" style={{ margin: '0 4px', lineHeight: 1.5 }}>
-              {chatId
-                ? 'После создания бот пришлёт карточку в группу, и все ответят в пару касаний.'
-                : 'После создания выберите чат — бот пришлёт туда карточку, и друзья ответят в пару касаний.'}
-            </p>
-          </>
-        )}
+            )}
+            <SelectRow label="Сколько по времени" options={opts(DURATION_LABELS)} value={duration} onChange={setDuration} />
+            <SelectRow label="Ответить до" options={opts(DEADLINES)} value={deadline} onChange={setDeadline} />
+          </div>
+        </section>
+
+        <section className="section">
+          <h2 className="h2">Где</h2>
+          <Segmented label="Как выбираем место" options={PLACE_MODES} value={mode} onChange={setMode} />
+          <div className="caption section-note">{PLACE_HINTS[mode]}</div>
+          {needsPlace && <PlacePicker id="meet" value={place} onChange={setPlace} format={format} />}
+          <div className="list">
+            <SelectRow label="Бюджет на человека" options={opts(BUDGET_LABELS)} value={budget} onChange={setBudget} suffix={budget === 'any' ? '' : ' сум'} />
+          </div>
+        </section>
       </main>
 
       <BottomBar>
-        {step < 3 ? (
-          <MainButton onClick={() => setStep(step + 1)} disabled={!canNext}>
-            {step === 1 ? 'Далее — когда' : 'Далее — где'}
-            <IconArrowRight size={20} strokeWidth={2.5} />
-          </MainButton>
-        ) : (
-          <>
-            {needsPlace && !placeReady && (
-              <div className="caption" style={{ textAlign: 'center' }}>
-                Выберите место на карте
-              </div>
-            )}
-            <MainButton onClick={submit} busy={busy} disabled={needsPlace && !placeReady}>
-              <IconSend size={20} />
-              {chatId ? 'Создать и отправить в группу' : 'Создать и отправить в чат'}
-            </MainButton>
-          </>
-        )}
+        <MainButton onClick={submit} busy={busy} disabled={!ready}>
+          <IconSend size={20} />
+          {needsPlace && !placeReady ? 'Сначала выберите место' : chatId ? 'Создать и отправить в группу' : 'Создать и отправить в чат'}
+        </MainButton>
       </BottomBar>
     </div>
   );

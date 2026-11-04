@@ -42,7 +42,8 @@ def test_telegram_auth_and_plan_flow():
     owner = tma_header(1001, "Аня")
     friend = tma_header(1002, "Тимур")
 
-    assert client.get("/api/me", headers=owner).json() == {"id": 1001, "name": "Аня"}
+    me = client.get("/api/me", headers=owner).json()
+    assert (me["id"], me["name"], me["allowsPm"]) == (1001, "Аня", False)
 
     created = client.post("/api/plans", headers=owner, json={
         "title": "Кофе", "format": "eat", "budget": "any", "duration": "1-2",
@@ -93,3 +94,38 @@ def test_delete_plan_over_http():
     assert client.delete(url, headers=friend).status_code == 403
     assert client.delete(url, headers=owner).json() == {"ok": True}
     assert client.get(url, headers=owner).status_code == 404
+
+
+def test_page_is_revalidated_and_assets_are_cached(tmp_path):
+    (tmp_path / "assets").mkdir()
+    (tmp_path / "index.html").write_text("<html></html>", encoding="utf-8")
+    (tmp_path / "assets" / "app-123.js").write_text("1", encoding="utf-8")
+    cfg = Config(bot_token=TOKEN, static_dir=str(tmp_path))
+    client = TestClient(create_app(PlanService(open_db(":memory:"), PLACES, cfg.tz), cfg))
+
+    assert client.get("/").headers["cache-control"] == "no-cache"
+    assert client.get("/?startapp=p_1").headers["cache-control"] == "no-cache"
+    assert client.get("/unknown").headers["cache-control"] == "no-cache"
+    assert "immutable" in client.get("/assets/app-123.js").headers["cache-control"]
+    assert client.get("/assets/old-456.js").headers["cache-control"] == "no-cache"
+
+
+def test_photo_from_telegram_reaches_other_members():
+    client = make_client()
+    fields = {
+        "user": json.dumps({"id": 1001, "first_name": "Аня", "photo_url": "https://t.me/i/userpic/320/a.jpg"}),
+        "auth_date": str(int(time.time())),
+    }
+    owner = {"Authorization": f"tma {urlencode({**fields, 'hash': sign_init_data(fields, TOKEN)})}"}
+    plan_id = client.post("/api/plans", headers=owner, json={
+        "title": "Кофе", "format": "eat", "budget": "any", "duration": "1-2", "votePlace": True, "middle": False,
+        "days": ["2030-01-05"], "times": ["12:00"], "deadlineHours": None, "placeId": None,
+    }).json()["id"]
+
+    # Открытие без фото в initData не стирает уже известное.
+    view = client.get(f"/api/plans/{plan_id}", headers=tma_header(1002, "Тимур")).json()
+    assert view["ownerPhoto"] == "https://t.me/i/userpic/320/a.jpg"
+    assert view["members"][0]["photo"] == "https://t.me/i/userpic/320/a.jpg"
+    assert view["members"][1]["photo"] is None
+    client.get(f"/api/plans/{plan_id}", headers=tma_header(1001, "Аня"))
+    assert client.get(f"/api/plans/{plan_id}", headers=owner).json()["ownerPhoto"] == "https://t.me/i/userpic/320/a.jpg"

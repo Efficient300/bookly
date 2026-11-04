@@ -4,7 +4,7 @@ from types import SimpleNamespace
 from unittest.mock import create_autospec
 
 from telegram import Bot, MenuButtonWebApp
-from telegram.error import BadRequest
+from telegram.error import BadRequest, Forbidden
 
 from app.bot import BotNotifier, group_menu, setup_menu_button
 from app.config import Config
@@ -95,4 +95,29 @@ def test_group_menu_links_back_to_group():
     assert urls == [
         f"https://t.me/skhodka_bot?startapp=p_{plan_id}&mode=compact",
         "https://t.me/skhodka_bot?startapp=new_-100&mode=compact",
+        "https://t.me/skhodka_bot?start=notify",
     ]
+
+
+def test_notifications_go_to_private_chat_not_group():
+    notifier, service, plan_id, bot = make_notifier()
+    service.set_allows_pm(1, True)
+
+    async def scenario():
+        await notifier.post_card(plan_id, -100, 1)
+        bot.send_message.reset_mock()
+        service.update_me(plan_id, 1, {"status": "go", "slots": {"2030-01-05T12:00": 1}})
+        service.confirm(plan_id, 1, "2030-01-05T12:00", None)
+        await asyncio.gather(*notifier._tasks)
+
+    asyncio.run(scenario())
+    assert [c.args[0] for c in bot.send_message.await_args_list] == [1]
+    assert "решено" in bot.send_message.await_args.args[1]
+
+
+def test_blocked_bot_stops_private_messages():
+    notifier, service, plan_id, bot = make_notifier()
+    service.set_allows_pm(1, True)
+    bot.send_message.side_effect = Forbidden("bot was blocked by the user")
+    asyncio.run(notifier._dm([1], "Текст", plan_id))
+    assert service.allows_pm(1) is False

@@ -169,7 +169,10 @@ class Spy:
     def __init__(self):
         self.deleted = None
         self.nudged = None
+        self.answers = []
 
+    def plan_created(self, plan_id): pass
+    def member_answered(self, plan_id, name, status): self.answers.append((name, status))
     def plan_changed(self, plan_id): pass
     def plan_confirmed(self, plan_id): pass
     def remind(self, plan_id, kind): pass
@@ -240,3 +243,30 @@ def test_owner_goes_after_confirming(service: PlanService):
     service.update_me(plan_id, 2, {"status": "go", "slots": {"2030-01-05T20:00": 1}})
     view = service.confirm(plan_id, 1, "2030-01-05T20:00", None)
     assert next(m for m in view["members"] if m["id"] == 1)["status"] == "go"
+
+
+def test_organizer_hears_only_first_answer(service: PlanService):
+    service.notifier = Spy()
+    plan_id = service.create(1, BASE_PLAN)
+    service.update_me(plan_id, 2, {"status": "go"})
+    service.update_me(plan_id, 2, {"status": "no"})
+    service.update_me(plan_id, 1, {"status": "go"})
+    assert service.notifier.answers == [("Тимур", "go")]
+
+
+def test_photo_url_must_be_https(service: PlanService):
+    service.upsert_user(1, "Аня", photo_url="javascript:alert(1)")
+    plan_id = service.create(1, BASE_PLAN)
+    assert service.view(plan_id, 1)["ownerPhoto"] is None
+    service.upsert_user(1, "Аня", photo_url="https://t.me/i/userpic/320/a.jpg")
+    assert service.view(plan_id, 1)["ownerPhoto"] == "https://t.me/i/userpic/320/a.jpg"
+
+
+def test_group_people_get_news_only_with_permission(service: PlanService):
+    old = service.create(1, BASE_PLAN)
+    service.set_chat_message(old, -100, 5)
+    service.view(old, 2)
+    service.view(old, 3)
+    service.set_allows_pm(1, True)
+    service.set_allows_pm(3, True)
+    assert service.chat_people(-100, exclude=1) == [3]

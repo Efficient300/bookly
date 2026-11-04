@@ -4,6 +4,7 @@ import type { PlanView, Review } from '../../../shared/types.ts';
 import { api } from '../api.ts';
 import { DeletePlanButton } from '../components/DeletePlanButton.tsx';
 import { IconCheck, IconRepeat, IconStar } from '../components/icons.tsx';
+import { PlanCover } from '../components/PlanCover.tsx';
 import { Avatar, BottomBar, MainButton, useToast } from '../components/ui.tsx';
 import { useNav } from '../nav.tsx';
 import { haptic } from '../telegram.ts';
@@ -55,12 +56,13 @@ export function After({ plan, setPlan }: { plan: PlanView; setPlan: (p: PlanView
   return (
     <div className="screen">
       <main className="content">
-        <div className="head">
-          <div className="caption">
+        <PlanCover format={plan.format}>
+          <span className="cover-sub">{plan.title}</span>
+          <h1 className="cover-title">Как прошло?</h1>
+          <span className="cover-sub">
             {[place?.name, plan.chosen ? dayLabel(plan.chosen.date) : null].filter(Boolean).join(' · ')}
-          </div>
-          <h1 className="h1">Как прошло?</h1>
-        </div>
+          </span>
+        </PlanCover>
 
         <div className="card row" style={{ flexDirection: 'row', padding: '12px 12px 12px 16px' }}>
           <span className="grow" style={{ fontSize: 15, fontWeight: 500 }}>
@@ -135,7 +137,7 @@ export function After({ plan, setPlan }: { plan: PlanView; setPlan: (p: PlanView
                   value={total}
                   onChange={(e) => setTotal(e.target.value)}
                 />
-                <button type="submit" className="btn-small" style={{ height: 52 }} disabled={!parseSum(total)}>
+                <button type="submit" className="btn-small" style={{ height: 44, borderRadius: 12 }} disabled={!parseSum(total)}>
                   Счёт на мне
                 </button>
               </form>
@@ -149,7 +151,7 @@ export function After({ plan, setPlan }: { plan: PlanView; setPlan: (p: PlanView
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 4, alignItems: 'flex-end' }}>
                     <span className="caption">Кто платил</span>
                     <span className="row" style={{ fontSize: 15, fontWeight: 500 }}>
-                      {payer && <Avatar name={payer.name} seed={payer.id} size={22} />}
+                      {payer && <Avatar name={payer.name} seed={payer.id} photo={payer.photo} size={22} />}
                       {payer?.name ?? '—'}
                     </span>
                   </div>
@@ -165,7 +167,7 @@ export function After({ plan, setPlan }: { plan: PlanView; setPlan: (p: PlanView
                       const canMark = myId === bill.payerId || myId === m.id;
                       return (
                         <div key={m.id} className="row" style={{ height: 44, gap: 10 }}>
-                          <Avatar name={m.name} seed={m.id} />
+                          <Avatar name={m.name} seed={m.id} photo={m.photo} />
                           <span className="grow" style={{ fontSize: 15, fontWeight: 500 }}>
                             {m.name}
                           </span>

@@ -30,6 +30,7 @@ export interface TgWebApp {
     notificationOccurred(type: 'success' | 'error' | 'warning'): void;
   };
   openLink(url: string): void;
+  openTelegramLink(url: string): void;
   showConfirm(message: string, cb: (ok: boolean) => void): void;
   switchInlineQuery(query: string, chooseChatTypes?: ChatType[]): void;
   downloadFile?(params: { url: string; file_name: string }, cb?: (accepted: boolean) => void): void;
@@ -119,19 +120,30 @@ export function downloadFile(url: string, fileName: string) {
   else openLink(absolute);
 }
 
-/** Разрешение боту писать в личку — для напоминаний. Спрашиваем один раз. */
-export function askWriteAccessOnce(): Promise<boolean | null> {
+/** Разрешение боту писать в личку. null — клиент Telegram не умеет спрашивать. */
+export function askWriteAccess(): Promise<boolean | null> {
   return new Promise((resolve) => {
     if (!tg?.requestWriteAccess || !supports('6.9')) return resolve(null);
-    if (tg.initDataUnsafe.user?.allows_write_to_pm) return resolve(null);
-    try {
-      if (localStorage.getItem('write-access-asked')) return resolve(null);
-      localStorage.setItem('write-access-asked', '1');
-    } catch {
-      // localStorage может быть недоступен — просто спросим.
-    }
     tg.requestWriteAccess((allowed) => resolve(allowed));
   });
+}
+
+/** После первого ответа спрашиваем один раз, чтобы не надоедать. */
+export function askWriteAccessOnce(): Promise<boolean | null> {
+  if (tg?.initDataUnsafe.user?.allows_write_to_pm) return Promise.resolve(null);
+  try {
+    if (localStorage.getItem('write-access-asked')) return Promise.resolve(null);
+    localStorage.setItem('write-access-asked', '1');
+  } catch {
+    // localStorage может быть недоступен — просто спросим.
+  }
+  return askWriteAccess();
+}
+
+export function openBotChat(bot: string) {
+  const url = `https://t.me/${bot}?start=notify`;
+  if (tg && supports('6.1')) tg.openTelegramLink(url);
+  else openLink(url);
 }
 
 export function getLocation(): Promise<LatLng | null> {

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { Format, LatLng } from '../../../shared/types.ts';
-import { CITY_CENTER, hasSearch, reverseGeocode, searchPlaces } from '../lib/ymaps.ts';
+import { CITY_CENTER, hasSearch, resolvePlace, reverseGeocode, searchPlaces } from '../lib/ymaps.ts';
 import type { FoundPlace } from '../lib/ymaps.ts';
 import { useNav } from '../nav.tsx';
 import { expandApp, getLocation, haptic } from '../telegram.ts';
@@ -38,7 +38,7 @@ export function MapPicker({
   format: Format;
   near: LatLng | null;
   initial: LatLng | null;
-  onSelect: (place: FoundPlace) => void;
+  onSelect: (place: FoundPlace & LatLng) => void;
   onClose: () => void;
 }) {
   const nav = useNav();
@@ -95,18 +95,31 @@ export function MapPicker({
     return () => clearTimeout(timer);
   }, [query]);
 
-  const marks = useMemo(() => results.map((r, i) => ({ lat: r.lat, lng: r.lng, label: String(i + 1) })), [results]);
+  const marks = useMemo(
+    () => results.flatMap((r, i) => (r.lat !== null && r.lng !== null ? [{ lat: r.lat, lng: r.lng, label: String(i + 1) }] : [])),
+    [results],
+  );
+  const point = selected && selected.lat !== null && selected.lng !== null ? { ...selected, lat: selected.lat, lng: selected.lng } : null;
 
-  function choose(place: FoundPlace) {
+  async function choose(place: FoundPlace) {
     haptic.select();
+    const id = ++request.current;
     setSelected(place);
-    setFocus({ lat: place.lat, lng: place.lng });
+    const full = await resolvePlace(place);
+    if (id !== request.current) return;
+    setSelected(full);
+    if (full.lat !== null && full.lng !== null) setFocus({ lat: full.lat, lng: full.lng });
   }
 
   function pickPoint(point: LatLng) {
     haptic.select();
     const id = ++request.current;
     setSearching(false);
+    // Выбранная подсказка без координат получает точку, которую поставил человек.
+    if (selected && selected.lat === null) {
+      setSelected({ ...selected, ...point });
+      return;
+    }
     setSelected({ ...point, name: POINT_NAME, address: null });
     void reverseGeocode(point).then((name) => {
       if (name && id === request.current) setSelected({ ...point, name, address: null });
@@ -136,13 +149,13 @@ export function MapPicker({
         className="map picker-map"
         initialView={start}
         marks={marks}
-        pick={selected}
+        pick={point}
         focus={focus}
         onMoveEnd={(c) => {
           center.current = c;
         }}
         onPick={pickPoint}
-        onMarkClick={(i) => choose(results[i])}
+        onMarkClick={(i) => void choose(results.filter((r) => r.lat !== null)[i])}
       />
 
       <div className="picker-top">
@@ -196,14 +209,20 @@ export function MapPicker({
               <div style={{ fontSize: 20, fontWeight: 600 }}>{selected.name}</div>
               {selected.address && <div className="caption">{selected.address}</div>}
             </div>
-            <button type="button" className="btn-main" onClick={() => onSelect(selected)}>
-              Выбрать это место
-            </button>
+            {point ? (
+              <button type="button" className="btn-main" onClick={() => onSelect(point)}>
+                Выбрать это место
+              </button>
+            ) : (
+              <div className="pick-hint" role="status">
+                Нажмите на карту, где находится это место
+              </div>
+            )}
           </div>
         ) : results.length > 0 ? (
           <div className="picker-results">
             {results.map((r, i) => (
-              <button key={`${r.lat},${r.lng},${i}`} type="button" className="list-row" onClick={() => choose(r)}>
+              <button key={`${r.lat},${r.lng},${i}`} type="button" className="list-row" onClick={() => void choose(r)}>
                 <span className="place-num" aria-hidden="true">
                   {i + 1}
                 </span>

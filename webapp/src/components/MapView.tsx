@@ -6,6 +6,7 @@ import type { YCollection, YMap, YMaps } from '../lib/ymaps.ts';
 
 export interface Person extends LatLng {
   name: string;
+  photo?: string | null;
   me?: boolean;
 }
 
@@ -122,7 +123,8 @@ export function MapView({
       );
     });
     for (const person of people) {
-      const html = `<div class="pin person${person.me ? ' me' : ''}">${escape(initials(person.name))}</div>`;
+      const face = person.photo ? `<img src="${escape(person.photo)}" alt="" referrerpolicy="no-referrer" />` : '';
+      const html = `<div class="pin person${person.me ? ' me' : ''}">${escape(initials(person.name))}${face}</div>`;
       layer.add(htmlMark(ymaps, person, html, 13, { title: person.name, transparent: true }));
     }
 

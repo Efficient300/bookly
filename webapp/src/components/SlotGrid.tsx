@@ -1,12 +1,41 @@
 import { useRef } from 'react';
-import type { KeyboardEvent, PointerEvent, ReactNode } from 'react';
+import type { CSSProperties, KeyboardEvent, PointerEvent, ReactNode } from 'react';
 import { dayLabel, dayNumber, weekdayShort } from '../../../shared/format.ts';
 import type { SlotValue } from '../../../shared/types.ts';
 import { haptic } from '../telegram.ts';
-import { IconCheck } from './icons.tsx';
+import { IconCheck, IconQuestion } from './icons.tsx';
 
 type Cell = 0 | SlotValue;
 const WORDS = ['не могу', 'удобно', 'если надо'];
+
+/** Чем закрашиваем слоты: 1 — удобно, 2 — если надо, 0 — стираем. */
+export type Brush = Cell;
+
+export function BrushPicker({ value, onChange }: { value: Brush; onChange: (brush: Brush) => void }) {
+  const items: { brush: Brush; label: string; dot: string }[] = [
+    { brush: 1, label: 'Удобно', dot: 'good' },
+    { brush: 2, label: 'Если надо', dot: 'maybe' },
+    { brush: 0, label: 'Не могу', dot: '' },
+  ];
+  return (
+    <div className="segmented" role="group" aria-label="Чем отмечать время">
+      {items.map((i) => (
+        <button
+          key={i.brush}
+          type="button"
+          aria-pressed={value === i.brush}
+          onClick={() => {
+            haptic.select();
+            onChange(i.brush);
+          }}
+        >
+          <i className={`brush-dot ${i.dot}`} aria-hidden="true" />
+          {i.label}
+        </button>
+      ))}
+    </div>
+  );
+}
 
 function columns(days: string[]) {
   return { gridTemplateColumns: `44px repeat(${days.length}, minmax(64px, 1fr))` };
@@ -26,18 +55,20 @@ function DayHeader({ days }: { days: string[] }) {
 }
 
 /**
- * Сетка «когда удобно». Нажатие переключает удобно → если надо → не могу,
+ * Сетка «когда удобно». Нажатие закрашивает слот выбранной кистью, повторное — стирает,
  * протягивание пальцем закрашивает соседние слоты тем же значением.
  */
 export function SlotGrid({
   days,
   times,
   value,
+  brush,
   onChange,
 }: {
   days: string[];
   times: string[];
   value: Record<string, SlotValue>;
+  brush: Brush;
   onChange: (next: Record<string, SlotValue>) => void;
 }) {
   const current = useRef(value);
@@ -53,6 +84,8 @@ export function SlotGrid({
     onChange(next);
   };
 
+  const paintValue = (key: string): Cell => ((current.current[key] ?? 0) === brush ? 0 : brush);
+
   const keyAt = (x: number, y: number) =>
     (document.elementFromPoint(x, y) as HTMLElement | null)?.closest<HTMLElement>('[data-key]')?.dataset.key;
 
@@ -60,7 +93,7 @@ export function SlotGrid({
     const key = keyAt(e.clientX, e.clientY);
     if (!key) return;
     e.preventDefault();
-    const v = (((current.current[key] ?? 0) + 1) % 3) as Cell;
+    const v = paintValue(key);
     paint.current = v;
     set(key, v);
     haptic.select();
@@ -84,14 +117,15 @@ export function SlotGrid({
   const onKeyDown = (e: KeyboardEvent<HTMLButtonElement>, key: string) => {
     if (e.key !== 'Enter' && e.key !== ' ') return;
     e.preventDefault();
-    set(key, (((current.current[key] ?? 0) + 1) % 3) as Cell);
+    set(key, paintValue(key));
   };
 
   return (
     <div className="slot-scroll">
       <div
         className="slot-grid"
-        style={{ ...columns(days), touchAction: days.length > 4 ? 'pan-x' : 'none' }}
+        // Жест на самих слотах закрашивает, а на подписях времени — листает страницу.
+        style={{ ...columns(days), '--slot-touch': days.length > 4 ? 'pan-x' : 'none' } as CSSProperties}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={stop}
@@ -113,7 +147,7 @@ export function SlotGrid({
                   onKeyDown={(e) => onKeyDown(e, key)}
                 >
                   {v === 1 && <IconCheck size={18} strokeWidth={2.5} />}
-                  {v === 2 && 'если надо'}
+                  {v === 2 && <IconQuestion size={18} strokeWidth={2.5} />}
                 </button>
               );
             })}
@@ -130,25 +164,6 @@ function Row({ time, children }: { time: string; children: ReactNode }) {
       <span className="time">{time}</span>
       {children}
     </>
-  );
-}
-
-export function SlotLegend() {
-  return (
-    <div className="legend">
-      <span>
-        <i className="good" />
-        Удобно
-      </span>
-      <span>
-        <i className="maybe" />
-        Если надо
-      </span>
-      <span>
-        <i />
-        Не могу
-      </span>
-    </div>
   );
 }
 
@@ -171,7 +186,7 @@ export function HeatGrid({
   const level = (n: number) => (total === 0 || n === 0 ? 0 : Math.max(1, Math.round((n / total) * HEAT_STEPS)));
   return (
     <div className="slot-scroll">
-      <div className="slot-grid" style={{ ...columns(days), gap: 4, touchAction: 'auto' }}>
+      <div className="slot-grid" style={columns(days)}>
         <DayHeader days={days} />
         {times.map((t) => (
           <Row key={t} time={t}>

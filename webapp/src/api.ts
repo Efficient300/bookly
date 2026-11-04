@@ -1,5 +1,5 @@
 import type { Me, MePatch, NewPlace, NewPlan, PlanSummary, PlanView, Review } from '../../shared/types.ts';
-import { askWriteAccessOnce, inTelegram, tg } from './telegram.ts';
+import { askWriteAccess, askWriteAccessOnce, inTelegram, tg } from './telegram.ts';
 
 const BASE = String(import.meta.env.VITE_API_URL ?? '').replace(/\/$/, '');
 
@@ -58,9 +58,9 @@ export const api = {
   icsUrl: (id: string) => `${BASE}/api/plans/${id}/event.ics`,
 };
 
-/** Один раз спрашивает разрешение на личные сообщения и сообщает ответ серверу. */
-export async function enableReminders(): Promise<void> {
-  const allowed = await askWriteAccessOnce();
+/** Спрашивает разрешение на личные сообщения и сообщает ответ серверу. По просьбе человека — в любой момент. */
+export async function enableReminders(force = false): Promise<void> {
+  const allowed = await (force ? askWriteAccess() : askWriteAccessOnce());
   if (allowed !== null) await api.writeAccess(allowed).catch(() => {});
 }
 

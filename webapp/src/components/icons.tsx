@@ -131,3 +131,76 @@ export const IconMapPinFilled = (p: IconProps) => (
     <path d="M12 2a7 7 0 0 0-7 7c0 5.2 7 13 7 13s7-7.8 7-13a7 7 0 0 0-7-7zm0 9.5a2.5 2.5 0 1 1 0-5 2.5 2.5 0 0 1 0 5z" />
   </svg>
 );
+
+export const IconX = (p: IconProps) => (
+  <svg {...base(p)}>
+    <path d="M6 6l12 12M18 6L6 18" />
+  </svg>
+);
+
+export const IconQuestion = (p: IconProps) => (
+  <svg {...base(p)}>
+    <path d="M8.5 9a3.5 3.5 0 1 1 5.6 2.8c-1.3 1-2.1 1.7-2.1 3.2" />
+    <path d="M12 19v.01" />
+  </svg>
+);
+
+export const IconFork = (p: IconProps) => (
+  <svg {...base(p)}>
+    <path d="M7 3v7a2.5 2.5 0 0 0 2.5 2.5V21" />
+    <path d="M12 3v7a2.5 2.5 0 0 1-2.5 2.5" />
+    <path d="M9.5 3v5" />
+    <path d="M17 21v-7h-2V7c0-2.5 1-4 3-4v18" />
+  </svg>
+);
+
+export const IconCup = (p: IconProps) => (
+  <svg {...base(p)}>
+    <path d="M4 9h13v6a5 5 0 0 1-5 5H9a5 5 0 0 1-5-5z" />
+    <path d="M17 11h1.5a2.5 2.5 0 0 1 0 5H17" />
+    <path d="M8 3c-.8 1 .8 2 0 3M12.5 3c-.8 1 .8 2 0 3" />
+  </svg>
+);
+
+export const IconGlass = (p: IconProps) => (
+  <svg {...base(p)}>
+    <path d="M5 4h14l-7 8z" />
+    <path d="M12 12v8M8 20h8" />
+  </svg>
+);
+
+export const IconBolt = (p: IconProps) => (
+  <svg {...base(p)}>
+    <path d="M13 3L5 14h6l-1 7 8-11h-6z" />
+  </svg>
+);
+
+export const IconWalk = (p: IconProps) => (
+  <svg {...base(p)}>
+    <circle cx="13" cy="4.5" r="1.8" />
+    <path d="M9 21l2.5-6 2.5 2v4" />
+    <path d="M7 12l2-4h4l1.5 3.5L18 13" />
+    <path d="M13 8l-1.5 7" />
+  </svg>
+);
+
+export const IconHome = (p: IconProps) => (
+  <svg {...base(p)}>
+    <path d="M4 11l8-7 8 7" />
+    <path d="M6 9.5V20h12V9.5" />
+    <path d="M10 20v-6h4v6" />
+  </svg>
+);
+
+export const IconSparkles = (p: IconProps) => (
+  <svg {...base(p)}>
+    <path d="M11 4l1.8 5.2L18 11l-5.2 1.8L11 18l-1.8-5.2L4 11l5.2-1.8z" />
+    <path d="M18.5 16v4M16.5 18h4" />
+  </svg>
+);
+
+export const IconUpDown = (p: IconProps) => (
+  <svg {...base(p)}>
+    <path d="M8 10l4-4 4 4M8 14l4 4 4-4" />
+  </svg>
+);

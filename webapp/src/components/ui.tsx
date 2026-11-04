@@ -1,7 +1,10 @@
 import { createContext, useCallback, useContext, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
-import { initials } from '../../../shared/format.ts';
+import { createPortal } from 'react-dom';
+import { dayNumber, initials, weekdayShort } from '../../../shared/format.ts';
+import type { MemberStatus } from '../../../shared/types.ts';
 import { haptic } from '../telegram.ts';
+import { IconCheck, IconQuestion, IconUpDown, IconX } from './icons.tsx';
 
 const AVATAR_TONES = 6;
 
@@ -10,7 +13,18 @@ function tone(seed: string | number): string {
   return `var(--av-${(Math.abs(n) % AVATAR_TONES) + 1})`;
 }
 
-export function Avatar({ name, seed, size = 28 }: { name: string; seed?: string | number; size?: number }) {
+export function Avatar({
+  name,
+  seed,
+  photo = null,
+  size = 28,
+}: {
+  name: string;
+  seed?: string | number;
+  photo?: string | null;
+  size?: number;
+}) {
+  const [broken, setBroken] = useState(false);
   return (
     <span
       className="avatar"
@@ -18,15 +32,24 @@ export function Avatar({ name, seed, size = 28 }: { name: string; seed?: string 
       style={{ width: size, height: size, fontSize: size * 0.43, background: tone(seed ?? name) }}
     >
       {initials(name)}
+      {photo && !broken && <img src={photo} alt="" referrerPolicy="no-referrer" onError={() => setBroken(true)} />}
     </span>
   );
 }
 
-export function AvatarStack({ people, max = 5, size = 28 }: { people: { id: number; name: string }[]; max?: number; size?: number }) {
+export function AvatarStack({
+  people,
+  max = 5,
+  size = 28,
+}: {
+  people: { id: number; name: string; photo?: string | null }[];
+  max?: number;
+  size?: number;
+}) {
   return (
     <span className="avatars" aria-hidden="true">
       {people.slice(0, max).map((p) => (
-        <Avatar key={p.id} name={p.name} seed={p.id} size={size} />
+        <Avatar key={p.id} name={p.name} seed={p.id} photo={p.photo} size={size} />
       ))}
     </span>
   );
@@ -59,6 +82,126 @@ export function Segmented<T extends string>({
         </button>
       ))}
     </div>
+  );
+}
+
+/** Строка со списком вариантов: на телефоне открывается системное меню выбора. */
+export function SelectRow<T extends string>({
+  label,
+  options,
+  value,
+  onChange,
+  suffix = '',
+}: {
+  label: string;
+  options: { value: T; label: string }[];
+  value: T;
+  onChange: (value: T) => void;
+  suffix?: string;
+}) {
+  const current = options.find((o) => o.value === value)?.label ?? '';
+  return (
+    <label className="list-row select-row">
+      <span className="grow list-title">{label}</span>
+      <span className="row-value">
+        {current}
+        {suffix}
+      </span>
+      <IconUpDown size={16} className="row-chevron" />
+      <select
+        value={value}
+        aria-label={label}
+        onChange={(e) => {
+          haptic.select();
+          onChange(e.target.value as T);
+        }}
+      >
+        {options.map((o) => (
+          <option key={o.value} value={o.value}>
+            {o.label}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
+const STATUSES: { value: MemberStatus; label: string; Icon: typeof IconCheck }[] = [
+  { value: 'go', label: 'Иду', Icon: IconCheck },
+  { value: 'maybe', label: 'Может быть', Icon: IconQuestion },
+  { value: 'no', label: 'Не могу', Icon: IconX },
+];
+
+/** Три большие кнопки вместо мелкого переключателя: нажать можно не глядя. */
+export function StatusPicker({ value, onChange }: { value: MemberStatus | null; onChange: (value: MemberStatus) => void }) {
+  return (
+    <div className="status-picker" role="group" aria-label="Ваш статус">
+      {STATUSES.map(({ value: v, label, Icon }) => (
+        <button
+          key={v}
+          type="button"
+          className={`status-item ${v}`}
+          aria-pressed={value === v}
+          onClick={() => {
+            haptic.select();
+            onChange(v);
+          }}
+        >
+          <span className="status-icon">
+            <Icon size={22} strokeWidth={2.5} />
+          </span>
+          {label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/** Плитка даты, как значок календаря: день недели и число. */
+export function DateTile({ day }: { day: string }) {
+  return (
+    <span className="date-tile" aria-hidden="true">
+      <small>{weekdayShort(day)}</small>
+      <b>{dayNumber(day)}</b>
+    </span>
+  );
+}
+
+/** Меню снизу с вариантами действия. */
+export function ActionSheet({
+  title,
+  options,
+  onClose,
+}: {
+  title: string;
+  options: { label: string; run: () => void }[];
+  onClose: () => void;
+}) {
+  return createPortal(
+    <div className="sheet-backdrop" role="dialog" aria-modal="true" aria-label={title} onClick={onClose}>
+      <div className="action-sheet" onClick={(e) => e.stopPropagation()}>
+        <div className="list">
+          <div className="action-title">{title}</div>
+          {options.map((o) => (
+            <button
+              key={o.label}
+              type="button"
+              className="action-option"
+              onClick={() => {
+                onClose();
+                o.run();
+              }}
+            >
+              {o.label}
+            </button>
+          ))}
+        </div>
+        <button type="button" className="action-option cancel" onClick={onClose}>
+          Отмена
+        </button>
+      </div>
+    </div>,
+    document.body,
   );
 }
 

@@ -17,6 +17,9 @@ export interface LatLng {
 export interface Me {
   id: number;
   name: string;
+  /** Бот может писать человеку в личку. */
+  allowsPm: boolean;
+  bot: string | null;
 }
 
 /** Своё место: название, ссылка и точка на карте. */
@@ -50,6 +53,8 @@ export interface NewPlan {
 export interface Member {
   id: number;
   name: string;
+  /** Фото профиля Telegram; у кого нет — показываем букву. */
+  photo: string | null;
   status: MemberStatus | null;
   isOwner: boolean;
 }
@@ -122,12 +127,13 @@ export interface PlanView {
   deadline: string | null;
   isOwner: boolean;
   ownerName: string;
+  ownerPhoto: string | null;
   days: string[];
   times: string[];
   members: Member[];
   me: MyAnswer;
   /** Примерные районы участников (округлены до ~1 км). */
-  areas: (LatLng & { name: string })[];
+  areas: (LatLng & { name: string; photo: string | null })[];
   /** Сколько человек свободно в слот: удобно + если надо. */
   heat: Record<string, number>;
   responded: number;
@@ -141,6 +147,7 @@ export interface PlanView {
 export interface PlanSummary {
   id: string;
   title: string;
+  format: Format;
   status: PlanStatus;
   isOwner: boolean;
   needsAnswer: boolean;
@@ -149,7 +156,7 @@ export interface PlanSummary {
   deadline: string | null;
   chosen: { date: string; time: string } | null;
   placeName: string | null;
-  going: string[];
+  going: Pick<Member, 'id' | 'name' | 'photo'>[];
   responded: number;
 }
 

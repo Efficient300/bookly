@@ -7,10 +7,13 @@ const KEY = import.meta.env.VITE_YANDEX_MAPS_KEY ?? '';
 
 export const hasSearch = !!KEY;
 
-/** Место из поиска Яндекса. */
-export interface FoundPlace extends LatLng {
+/** Место из поиска Яндекса. Подсказки приходят без координат: их может дополнить только поиск. */
+export interface FoundPlace {
+  lat: number | null;
+  lng: number | null;
   name: string;
   address: string | null;
+  uri?: string;
 }
 
 /** Центр города по умолчанию — Ташкент. */
@@ -64,10 +67,44 @@ export interface YMaps {
   geocode(request: string | Coords, options?: YSearchOptions): Promise<YSearchResult>;
 }
 
+// Подсказки по организациям есть только в JS API 3.0, карта при этом остаётся на 2.1.
+interface YMaps3 {
+  ready: Promise<void>;
+  suggest(options: { text: string; bounds: [Coords, Coords]; limit: number }): Promise<
+    { title?: { text: string }; subtitle?: { text: string }; uri?: string }[]
+  >;
+  search(options: { uri: string }): Promise<{ properties: { name: string; description?: string }; geometry?: { coordinates: Coords } }[]>;
+}
+
 declare global {
   interface Window {
     ymaps?: YMaps;
+    ymaps3?: YMaps3;
   }
+}
+
+let loading3: Promise<YMaps3> | null = null;
+
+function loadYmaps3(): Promise<YMaps3> {
+  loading3 ??= new Promise<YMaps3>((resolve, reject) => {
+    if (window.ymaps3) {
+      resolve(window.ymaps3);
+      return;
+    }
+    const script = document.createElement('script');
+    script.src = `https://api-maps.yandex.ru/v3/?${new URLSearchParams({ apikey: KEY, lang: 'ru_RU' })}`;
+    script.onload = () => {
+      const api = window.ymaps3;
+      if (api) void api.ready.then(() => resolve(api), reject);
+      else reject(new Error('Яндекс Карты не загрузились'));
+    };
+    script.onerror = () => reject(new Error('Яндекс Карты не загрузились'));
+    document.head.appendChild(script);
+  }).catch((e: unknown) => {
+    loading3 = null;
+    throw e;
+  });
+  return loading3;
 }
 
 let loading: Promise<YMaps> | null = null;
@@ -109,7 +146,23 @@ function readFound(result: YSearchResult): FoundPlace[] {
   return found;
 }
 
-/** Ищет организации рядом с точкой; если их нет или поиск недоступен — адреса. */
+async function suggestPlaces(query: string, near: LatLng): Promise<FoundPlace[]> {
+  const api = await loadYmaps3();
+  const found = await api.suggest({
+    text: query,
+    // В 3.0 координаты идут в порядке долгота, широта.
+    bounds: [
+      [near.lng - 0.13, near.lat + 0.1],
+      [near.lng + 0.13, near.lat - 0.1],
+    ],
+    limit: 10,
+  });
+  return found
+    .filter((s) => s.title?.text)
+    .map((s) => ({ lat: null, lng: null, name: s.title!.text, address: s.subtitle?.text ?? null, uri: s.uri }));
+}
+
+/** Ищет места рядом с точкой: с координатами, а если поиск ключу недоступен — подсказками без них. */
 export async function searchPlaces(query: string, near: LatLng): Promise<FoundPlace[]> {
   const ymaps = await loadYmaps();
   const options: YSearchOptions = {
@@ -123,9 +176,21 @@ export async function searchPlaces(query: string, near: LatLng): Promise<FoundPl
     const places = readFound(await ymaps.search(query, options));
     if (places.length > 0) return places;
   } catch {
-    // Ключ может не включать поиск организаций — тогда работает только геокодер.
+    // Поиск может быть недоступен ключу — тогда остаются подсказки.
   }
-  return readFound(await ymaps.geocode(query, options));
+  return suggestPlaces(query, near);
+}
+
+/** Координаты подсказки, если поиск их отдаёт. */
+export async function resolvePlace(place: FoundPlace): Promise<FoundPlace> {
+  if (place.lat !== null || !place.uri) return place;
+  try {
+    const api = await loadYmaps3();
+    const coords = (await api.search({ uri: place.uri }))[0]?.geometry?.coordinates;
+    return coords ? { ...place, lng: coords[0], lat: coords[1] } : place;
+  } catch {
+    return place;
+  }
 }
 
 /** Адрес точки на карте. */

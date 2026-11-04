@@ -14,9 +14,7 @@ export interface Nav {
   push(route: Route): void;
   pop(): void;
   reset(routes: Route[]): void;
-  /** Экран может перехватить «Назад» (например, шаги мастера). Вернуть true — обработано. */
-  setBackOverride(fn: (() => boolean) | null): void;
-  /** То же для окна поверх экрана: срабатывает первым и не трогает перехват экрана. */
+  /** Окно поверх экрана перехватывает «Назад». Вернуть true — обработано. */
   setOverlayBack(fn: (() => boolean) | null): void;
 }
 

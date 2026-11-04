@@ -20,6 +20,8 @@ class HttpError(Exception):
 
 
 class Notifier(Protocol):
+    def plan_created(self, plan_id: str) -> None: ...
+    def member_answered(self, plan_id: str, name: str, status: str) -> None: ...
     def plan_changed(self, plan_id: str) -> None: ...
     def plan_confirmed(self, plan_id: str) -> None: ...
     def nudge(self, plan_id: str, user_ids: list[int]) -> None: ...
@@ -29,6 +31,8 @@ class Notifier(Protocol):
 
 
 class NoopNotifier:
+    def plan_created(self, plan_id: str) -> None: pass
+    def member_answered(self, plan_id: str, name: str, status: str) -> None: pass
     def plan_changed(self, plan_id: str) -> None: pass
     def plan_confirmed(self, plan_id: str) -> None: pass
     def nudge(self, plan_id: str, user_ids: list[int]) -> None: pass
@@ -107,18 +111,43 @@ class PlanService:
 
     # ---------- пользователи ----------
 
-    def upsert_user(self, user_id: int, name: str, username: str | None = None, allows_pm: bool | None = None) -> None:
+    def upsert_user(
+        self,
+        user_id: int,
+        name: str,
+        username: str | None = None,
+        allows_pm: bool | None = None,
+        photo_url: str | None = None,
+    ) -> None:
         allows = None if allows_pm is None else int(allows_pm)
+        # Адрес фото показываем другим участникам, поэтому берём только обычные https-ссылки.
+        photo = photo_url if isinstance(photo_url, str) and photo_url.startswith("https://") else None
         self.db.execute(
-            """INSERT INTO users (id, name, username, allows_pm, updated_at)
-               VALUES (?, ?, ?, COALESCE(?, 0), ?)
+            """INSERT INTO users (id, name, username, allows_pm, photo_url, updated_at)
+               VALUES (?, ?, ?, COALESCE(?, 0), ?, ?)
                ON CONFLICT(id) DO UPDATE SET
                  name = excluded.name,
                  username = excluded.username,
                  allows_pm = COALESCE(?, users.allows_pm),
+                 photo_url = COALESCE(excluded.photo_url, users.photo_url),
                  updated_at = excluded.updated_at""",
-            (user_id, name, username, allows, now_iso(), allows),
+            (user_id, name, username, allows, photo, now_iso(), allows),
         )
+
+    def allows_pm(self, user_id: int) -> bool:
+        row = self.db.execute("SELECT allows_pm FROM users WHERE id = ?", (user_id,)).fetchone()
+        return bool(row and row["allows_pm"])
+
+    def chat_people(self, chat_id: int, exclude: int) -> list[int]:
+        """Кому написать о новой сходке в группе: участники её прежних сходок, разрешившие личку."""
+        rows = self.db.execute(
+            """SELECT DISTINCT m.user_id FROM members m
+               JOIN plans p ON p.id = m.plan_id
+               JOIN users u ON u.id = m.user_id
+               WHERE p.chat_id = ? AND u.allows_pm = 1 AND m.user_id != ?""",
+            (chat_id, exclude),
+        ).fetchall()
+        return [r["user_id"] for r in rows]
 
     def set_allows_pm(self, user_id: int, allowed: bool) -> None:
         self.db.execute("UPDATE users SET allows_pm = ? WHERE id = ?", (int(allowed), user_id))
@@ -174,6 +203,7 @@ class PlanService:
         if own_place:
             place_id = self._add_custom_place(plan_id, owner_id, own_place)
             self.db.execute("UPDATE plans SET place_id = ? WHERE id = ?", (place_id, plan_id))
+        self.notifier.plan_created(plan_id)
         return plan_id
 
     def view(self, plan_id: str, user_id: int) -> dict:
@@ -214,6 +244,7 @@ class PlanService:
             result.append({
                 "id": row["id"],
                 "title": row["title"],
+                "format": row["format"],
                 "status": status,
                 "isOwner": row["owner_id"] == user_id,
                 "expired": self._expired(row),
@@ -224,7 +255,11 @@ class PlanService:
                 "deadline": row["deadline"],
                 "chosen": {"date": row["chosen_date"], "time": row["chosen_time"]} if row["chosen_date"] else None,
                 "placeName": self._place_name(row),
-                "going": [m["name"] for m in members if m["status"] == "go"],
+                "going": [
+                    {"id": m["user_id"], "name": m["name"], "photo": m["photo_url"]}
+                    for m in members
+                    if m["status"] == "go"
+                ],
                 "responded": sum(1 for m in members if m["status"] is not None),
             })
         return result
@@ -234,6 +269,9 @@ class PlanService:
     def update_me(self, plan_id: str, user_id: int, patch: dict) -> dict:
         row = self._plan_row(plan_id)
         self._ensure_member(plan_id, user_id)
+        before = self.db.execute(
+            "SELECT status FROM members WHERE plan_id = ? AND user_id = ?", (plan_id, user_id)
+        ).fetchone()
         sets: list[str] = []
         values: list[Any] = []
 
@@ -272,6 +310,9 @@ class PlanService:
             )
         if "status" in patch or "slots" in patch:
             self.notifier.plan_changed(plan_id)
+        # Организатору пишем только о первом ответе человека, а не о каждой правке.
+        if "status" in patch and before["status"] is None and user_id != row["owner_id"]:
+            self.notifier.member_answered(plan_id, self.user_name(user_id), patch["status"])
         return self._build(self._plan_row(plan_id), user_id)
 
     def vote(self, plan_id: str, user_id: int, place_id: str, liked: bool) -> dict:
@@ -477,7 +518,7 @@ class PlanService:
 
     def _member_rows(self, plan_id: str) -> list[sqlite3.Row]:
         return self.db.execute(
-            """SELECT m.*, u.name, u.allows_pm FROM members m
+            """SELECT m.*, u.name, u.allows_pm, u.photo_url FROM members m
                JOIN users u ON u.id = m.user_id
                WHERE m.plan_id = ? ORDER BY m.joined_at, m.rowid""",
             (plan_id,),
@@ -567,10 +608,17 @@ class PlanService:
             "deadline": row["deadline"],
             "isOwner": row["owner_id"] == user_id,
             "ownerName": owner["name"] if owner else self.user_name(row["owner_id"]),
+            "ownerPhoto": owner["photo_url"] if owner else None,
             "days": days,
             "times": times,
             "members": [
-                {"id": m["user_id"], "name": m["name"], "status": m["status"], "isOwner": m["user_id"] == row["owner_id"]}
+                {
+                    "id": m["user_id"],
+                    "name": m["name"],
+                    "photo": m["photo_url"],
+                    "status": m["status"],
+                    "isOwner": m["user_id"] == row["owner_id"],
+                }
                 for m in members
             ],
             "me": {
@@ -582,7 +630,7 @@ class PlanService:
                 "review": json.loads(mine["review"]) if mine and mine["review"] else None,
             },
             "areas": [
-                {"lat": m["area_lat"], "lng": m["area_lng"], "name": m["name"]}
+                {"lat": m["area_lat"], "lng": m["area_lng"], "name": m["name"], "photo": m["photo_url"]}
                 for m in with_area
                 if m["user_id"] != user_id
             ],

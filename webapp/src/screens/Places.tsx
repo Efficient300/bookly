@@ -13,7 +13,8 @@ import { expandApp, haptic, openLink } from '../telegram.ts';
 
 function people(plan: PlanView): Person[] {
   const list: Person[] = plan.areas.map((a) => ({ ...a }));
-  if (plan.me.area) list.push({ ...plan.me.area, name: 'Я', me: true });
+  const photo = plan.members.find((m) => m.id === plan.me.id)?.photo ?? null;
+  if (plan.me.area) list.push({ ...plan.me.area, name: 'Я', photo, me: true });
   return list;
 }
 

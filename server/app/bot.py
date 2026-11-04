@@ -20,7 +20,7 @@ from telegram import (
     WebAppInfo,
 )
 from telegram.constants import ParseMode
-from telegram.error import BadRequest, TelegramError
+from telegram.error import BadRequest, Forbidden, TelegramError
 from telegram.ext import (
     Application,
     ChatMemberHandler,
@@ -36,6 +36,7 @@ from .plans import HttpError, PlanService
 
 log = logging.getLogger(__name__)
 PLAN_QUERY = re.compile(r"^p_([\w-]+)$")
+STATUS_WORDS = {"go": "идёт", "maybe": "может быть", "no": "не может"}
 
 
 def card_text(card: dict, tz: str) -> str:
@@ -85,6 +86,7 @@ def group_menu(service: PlanService, cfg: Config, chat_id: int) -> tuple[str, In
     plans = service.list_for_chat(chat_id)[:5]
     rows = [[InlineKeyboardButton(p["title"], url=cfg.direct_link(f"p_{p['id']}"))] for p in plans]
     rows.append([InlineKeyboardButton("Создать сходку", url=cfg.direct_link(f"new_{chat_id}"))])
+    rows.append([InlineKeyboardButton("Получать уведомления в личку", url=f"https://t.me/{cfg.bot_username}?start=notify")])
     text = "Сходки этой группы:" if plans else "Соберём всех: отметьте, когда удобно, и выберем место."
     return text, InlineKeyboardMarkup(rows)
 
@@ -127,8 +129,8 @@ class BotNotifier:
             return  # Сходку уже удалили.
         await self._edit_card(card, card_text(card, self.cfg.tz), card_keyboard(card, self.cfg))
 
-    async def _to_group(self, card: dict, text: str, with_button: bool = True) -> None:
-        """Новое сообщение в группу: правка карточки участникам уведомления не присылает."""
+    async def _to_group(self, card: dict, text: str) -> None:
+        """Сообщение в группу — только по просьбе организатора: остальные уведомления идут в личку."""
         if not card["chatId"]:
             return
         try:
@@ -136,7 +138,7 @@ class BotNotifier:
                 card["chatId"],
                 text,
                 parse_mode=ParseMode.HTML,
-                reply_markup=card_keyboard(card, self.cfg) if with_button else None,
+                reply_markup=card_keyboard(card, self.cfg),
                 reply_parameters=(
                     ReplyParameters(card["messageId"], allow_sending_without_reply=True) if card["messageId"] else None
                 ),
@@ -160,16 +162,32 @@ class BotNotifier:
             log.warning("Не удалось отправить карточку в группу %s: %s", chat_id, err)
             return False
         self.service.set_chat_message(plan_id, chat_id, message.message_id)
+        people = self.service.chat_people(chat_id, user_id)
+        self._spawn(self._dm(people, f"Новая сходка в группе: <b>{escape(card['title'])}</b>. Когда вам удобно?", plan_id))
         return True
 
-    async def _dm(self, user_ids: list[int], text: str, plan_id: str) -> None:
+    async def _dm(self, user_ids: list[int], text: str, plan_id: str | None) -> None:
+        markup = open_button(self.cfg, f"p_{plan_id}", "Открыть") if plan_id else None
         for uid in user_ids:
             try:
-                await self.app.bot.send_message(
-                    uid, text, parse_mode=ParseMode.HTML, reply_markup=open_button(self.cfg, f"p_{plan_id}", "Открыть")
-                )
+                await self.app.bot.send_message(uid, text, parse_mode=ParseMode.HTML, reply_markup=markup)
+            except Forbidden:
+                # Человек заблокировал бота: больше не пытаемся.
+                self.service.set_allows_pm(uid, False)
             except TelegramError as err:
                 log.warning("Не удалось написать %s: %s", uid, err)
+
+    def plan_created(self, plan_id: str) -> None:
+        card = self.service.card(plan_id)
+        ids = self.service.recipients(plan_id, lambda m: m["isOwner"])
+        text = f"Сходка <b>{escape(card['title'])}</b> создана. Напишу сюда, когда кто-нибудь ответит."
+        self._spawn(self._dm(ids, text, plan_id))
+
+    def member_answered(self, plan_id: str, name: str, status: str) -> None:
+        card = self.service.card(plan_id)
+        ids = self.service.recipients(plan_id, lambda m: m["isOwner"])
+        text = f"<b>{escape(card['title'])}</b>\n{escape(name)} — {STATUS_WORDS[status]}"
+        self._spawn(self._dm(ids, text, plan_id))
 
     def plan_changed(self, plan_id: str) -> None:
         # Склеиваем частые ответы в одно редактирование, чтобы не упереться в лимиты Telegram.
@@ -183,12 +201,10 @@ class BotNotifier:
         card = self.service.card(plan_id)
         if not card["chosen"]:
             return
-        ids = self.service.recipients(plan_id, lambda m: not m["isOwner"] and m["status"] != "no")
+        ids = self.service.recipients(plan_id, lambda m: m["status"] != "no")
         where = f", {escape(card['placeName'])}" if card["placeName"] else ""
         when = slot_label(card["chosen"]["date"], card["chosen"]["time"])
-        text = f"<b>{escape(card['title'])}</b>: решено — {when}{where}"
-        self._spawn(self._dm(ids, text, plan_id))
-        self._spawn(self._to_group(card, text))
+        self._spawn(self._dm(ids, f"<b>{escape(card['title'])}</b>: решено — {when}{where}", plan_id))
 
     def nudge(self, plan_id: str, user_ids: list[int]) -> None:
         card = self.service.card(plan_id)
@@ -206,25 +222,14 @@ class BotNotifier:
         when = "Завтра" if kind == "day" else "Скоро"
         where = f" — {escape(card['placeName'])}" if card["placeName"] else ""
         slot = slot_label(card["chosen"]["date"], card["chosen"]["time"])
-        text = f"{when}: <b>{escape(card['title'])}</b>, {slot}{where}. Всё в силе?"
-        self._spawn(self._dm(ids, text, plan_id))
-        self._spawn(self._to_group(card, text))
+        self._spawn(self._dm(ids, f"{when}: <b>{escape(card['title'])}</b>, {slot}{where}. Всё в силе?", plan_id))
 
     def plan_deleted(self, card: dict, user_ids: list[int]) -> None:
         if timer := self._timers.pop(card["id"], None):
             timer.cancel()
         text = f"<s>{escape(card['title'])}</s>\nСходка отменена"
         self._spawn(self._edit_card(card, text, None))
-        if card["status"] == "confirmed":
-            self._spawn(self._to_group(card, f"Сходка <b>{escape(card['title'])}</b> отменена", with_button=False))
-        self._spawn(self._notify_deleted(user_ids, text))
-
-    async def _notify_deleted(self, user_ids: list[int], text: str) -> None:
-        for uid in user_ids:
-            try:
-                await self.app.bot.send_message(uid, text, parse_mode=ParseMode.HTML)
-            except TelegramError as err:
-                log.warning("Не удалось написать %s: %s", uid, err)
+        self._spawn(self._dm(user_ids, text, None))
 
 
 async def setup_menu_button(bot: Bot, cfg: Config) -> None:
@@ -255,10 +260,19 @@ def create_bot(service: PlanService, cfg: Config) -> tuple[Application, BotNotif
             text, markup = group_menu(service, cfg, chat.id)
             await update.effective_message.reply_text(text, reply_markup=markup)
             return
+        # Человек сам написал боту — значит, в личку можно присылать уведомления.
+        user = update.effective_user
+        service.upsert_user(user.id, user.full_name, user.username, allows_pm=True)
+        if payload == "notify":
+            await update.effective_message.reply_text(
+                "Готово! Уведомления о сходках будут приходить сюда.",
+                reply_markup=open_button(cfg, "home", "Открыть Сходку"),
+            )
+            return
         text = "Открыть сходку" if payload.startswith("p_") else "Открыть Сходку"
         await update.effective_message.reply_text(
             "Сходка помогает договориться о встрече: когда всем удобно и куда пойти.\n\n"
-            "Создайте сходку и отправьте её в чат с друзьями.",
+            "Создайте сходку и отправьте её в чат с друзьями. Уведомления будут приходить сюда.",
             reply_markup=open_button(cfg, payload or "home", text),
         )
 
@@ -277,6 +291,10 @@ def create_bot(service: PlanService, cfg: Config) -> tuple[Application, BotNotif
         change = update.my_chat_member
         was_out = change.old_chat_member.status in ("left", "kicked")
         is_in = change.new_chat_member.status not in ("left", "kicked")
+        # В личке это блокировка и разблокировка бота.
+        if change.chat.type == "private":
+            service.set_allows_pm(change.chat.id, is_in)
+            return
         if not (was_out and is_in and change.chat.type in ("group", "supergroup")):
             return
         text, markup = group_menu(service, cfg, change.chat.id)

@@ -1,27 +1,15 @@
 import { useState } from 'react';
-import {
-  DURATION_LABELS,
-  FORMAT_LABELS,
-  budgetLabel,
-  daysRangeLabel,
-  deadlineLabel,
-  joinNames,
-  plural,
-} from '../../../shared/format.ts';
+import { DURATION_LABELS, FORMAT_LABELS, budgetLabel, daysRangeLabel, deadlineLabel, joinNames, plural } from '../../../shared/format.ts';
 import type { MemberStatus, PlanView, SlotValue } from '../../../shared/types.ts';
 import { api, enableReminders, planLink } from '../api.ts';
 import { DeletePlanButton } from '../components/DeletePlanButton.tsx';
 import { IconChevron, IconHeart, IconPin, IconSend } from '../components/icons.tsx';
-import { SlotGrid, SlotLegend } from '../components/SlotGrid.tsx';
-import { Avatar, AvatarStack, BottomBar, MainButton, Segmented, useToast } from '../components/ui.tsx';
+import { PlanCover } from '../components/PlanCover.tsx';
+import { BrushPicker, SlotGrid } from '../components/SlotGrid.tsx';
+import type { Brush } from '../components/SlotGrid.tsx';
+import { Avatar, AvatarStack, BottomBar, MainButton, StatusPicker, useToast } from '../components/ui.tsx';
 import { useNav } from '../nav.tsx';
 import { haptic, shareToChat } from '../telegram.ts';
-
-const STATUS_OPTIONS: { value: MemberStatus; label: string }[] = [
-  { value: 'go', label: 'Иду' },
-  { value: 'maybe', label: 'Может быть' },
-  { value: 'no', label: 'Не могу' },
-];
 
 const same = (a: Record<string, SlotValue>, b: Record<string, SlotValue>) =>
   JSON.stringify(Object.entries(a).sort()) === JSON.stringify(Object.entries(b).sort());
@@ -36,6 +24,7 @@ export function Answer({ plan, setPlan }: { plan: PlanView; setPlan: (p: PlanVie
   const toast = useToast();
   const [draft, setDraft] = useState<Draft | null>(() => drafts.get(plan.id) ?? null);
   const [busy, setBusy] = useState(false);
+  const [brush, setBrush] = useState<Brush>(1);
   const status = draft ? draft.status : plan.me.status;
   const slots = draft ? draft.slots : plan.me.slots;
   const change = (next: Draft) => {
@@ -91,50 +80,32 @@ export function Answer({ plan, setPlan }: { plan: PlanView; setPlan: (p: PlanVie
     toast('Ссылка скопирована');
   }
 
-  const meta = [
-    FORMAT_LABELS[plan.format],
-    budgetLabel(plan.budget),
-    DURATION_LABELS[plan.duration],
-  ].filter(Boolean) as string[];
+  const meta = [FORMAT_LABELS[plan.format], budgetLabel(plan.budget), DURATION_LABELS[plan.duration]].filter(Boolean).join(' · ');
 
   return (
     <div className="screen">
       <main className="content">
-        <div className="head">
-          <div className="row caption">
-            {plan.isOwner ? (
-              'Вы организатор'
-            ) : (
-              <>
-                <Avatar name={plan.ownerName} size={22} />
-                {plan.ownerName} зовёт вас
-              </>
-            )}
-          </div>
-          <h1 className="h1">{plan.title}</h1>
-          <div className="row wrap" style={{ gap: 6 }}>
-            {meta.map((m) => (
-              <span key={m} className="pill">
-                {m}
-              </span>
-            ))}
-            <span className="pill">{daysRangeLabel(plan.days)}</span>
-          </div>
-        </div>
+        <PlanCover format={plan.format}>
+          <span className="row cover-sub" style={{ gap: 6 }}>
+            {!plan.isOwner && <Avatar name={plan.ownerName} photo={plan.ownerPhoto} size={22} />}
+            {plan.isOwner ? 'Вы организатор' : `${plan.ownerName} зовёт вас`}
+          </span>
+          <h1 className="cover-title">{plan.title}</h1>
+          <span className="cover-sub">{daysRangeLabel(plan.days)}</span>
+          <span className="cover-sub">{meta}</span>
+        </PlanCover>
 
         {plan.isOwner && (
           <div className="card">
-            <div className="row" style={{ justifyContent: 'space-between' }}>
-              <div className="row" style={{ gap: 10 }}>
-                <AvatarStack people={plan.members.filter((m) => m.status !== null)} size={24} />
-                <span className="small">
-                  Ответили {plan.responded}
-                  {pending.length > 0 && <span className="muted"> · без ответа: {joinNames(pending.map((m) => m.name))}</span>}
-                </span>
-              </div>
+            <div className="row" style={{ gap: 10 }}>
+              <AvatarStack people={plan.members.filter((m) => m.status !== null)} size={26} />
+              <span className="small grow">
+                Ответили: {plan.responded}
+                {pending.length > 0 && <span className="muted"> · ждём {joinNames(pending.map((m) => m.name))}</span>}
+              </span>
             </div>
             <div className="row">
-              <button type="button" className="btn-small" onClick={() => nav.push({ name: 'results', id: plan.id })}>
+              <button type="button" className="btn-small grow" onClick={() => nav.push({ name: 'results', id: plan.id })}>
                 Итоги и выбор
               </button>
               <button type="button" className="btn-small outline row" onClick={share}>
@@ -144,74 +115,81 @@ export function Answer({ plan, setPlan }: { plan: PlanView; setPlan: (p: PlanVie
           </div>
         )}
 
-        <Segmented label="Ваш статус" options={STATUS_OPTIONS} value={status} onChange={setStatus} />
+        <section className="section">
+          <h2 className="h2">Вы идёте?</h2>
+          <StatusPicker value={status} onChange={setStatus} />
+        </section>
 
         {status !== 'no' && (
-          <section className="card" style={{ padding: '16px 14px' }}>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-              <h2 className="h2" style={{ fontSize: 18 }}>
-                Когда вам удобно?
-              </h2>
-              <div className="caption">Нажимайте или ведите пальцем: удобно → если надо → нет</div>
-            </div>
-            <SlotLegend />
-            <SlotGrid days={plan.days} times={plan.times} value={slots} onChange={setSlots} />
-            <div className="chips">
-              <button type="button" className="chip sm" onClick={() => fillAll(() => true)}>
-                Всё время
-              </button>
-              <button type="button" className="chip sm" onClick={() => fillAll((t) => evenings.includes(t))}>
-                Только вечер
-              </button>
-              <button type="button" className="chip sm" onClick={() => setSlots({})}>
-                Сбросить
-              </button>
+          <section className="section">
+            <h2 className="h2">Когда удобно?</h2>
+            <div className="card">
+              <BrushPicker value={brush} onChange={setBrush} />
+              <SlotGrid days={plan.days} times={plan.times} value={slots} brush={brush} onChange={setSlots} />
+              <div className="row quick-row">
+                <button type="button" className="btn-link" onClick={() => fillAll(() => true)}>
+                  Всё время
+                </button>
+                <button type="button" className="btn-link" onClick={() => fillAll((t) => evenings.includes(t))}>
+                  Только вечер
+                </button>
+                <button type="button" className="btn-link" onClick={() => setSlots({})}>
+                  Очистить
+                </button>
+              </div>
             </div>
           </section>
         )}
 
         {status !== 'no' && (plan.middle || plan.votePlace || meeting) && (
-          <div className="list">
-            {meeting && (
-              <button type="button" className="list-row" onClick={() => nav.push({ name: 'places', id: plan.id })}>
-                <IconPin size={22} style={{ color: 'var(--accent)', flexShrink: 0 }} />
-                <span className="grow" style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                  <span style={{ fontSize: 15, fontWeight: 500 }}>{meeting.name}</span>
-                  <span className="caption">{meeting.travel ?? 'Место встречи'}</span>
-                </span>
-                <span style={{ color: 'var(--accent)', fontSize: 14, fontWeight: 600 }}>На карте</span>
-              </button>
-            )}
-            {plan.middle && (
-              <button type="button" className="list-row" onClick={() => nav.push({ name: 'area', id: plan.id })}>
-                <IconPin size={22} style={{ color: 'var(--muted)', flexShrink: 0 }} />
-                <span className="grow" style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                  <span style={{ fontSize: 15, fontWeight: 500 }}>{plan.me.area ? 'Район отмечен' : 'Откуда поедете?'}</span>
-                  <span className="caption">
-                    {plan.me.area ? 'Точный адрес никто не увидит' : 'Подберём место посередине'}
+          <section className="section">
+            <h2 className="h2">Где</h2>
+            <div className="list">
+              {meeting && (
+                <button type="button" className="list-row" onClick={() => nav.push({ name: 'places', id: plan.id })}>
+                  <span className="icon-box">
+                    <IconPin size={20} />
                   </span>
-                </span>
-                <span style={{ color: 'var(--accent)', fontSize: 14, fontWeight: 600 }}>{plan.me.area ? 'Изменить' : 'Отметить'}</span>
-              </button>
-            )}
-            {plan.votePlace && (
-              <button type="button" className="list-row" onClick={() => nav.push({ name: 'places', id: plan.id })}>
-                <IconHeart size={22} style={{ color: 'var(--muted)', flexShrink: 0 }} />
-                <span className="grow" style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                  <span style={{ fontSize: 15, fontWeight: 500 }}>Голосование за место</span>
-                  <span className="caption">
-                    {leadingPlace
-                      ? `Впереди ${leadingPlace.name}`
-                      : `${plan.places.length} ${plural(plan.places.length, ['вариант', 'варианта', 'вариантов'])} на выбор`}
+                  <span className="grow row-text">
+                    <span className="list-title">{meeting.name}</span>
+                    <span className="caption">{meeting.travel ?? 'Место встречи'}</span>
                   </span>
-                </span>
-                <IconChevron size={18} style={{ color: 'var(--muted)' }} />
-              </button>
-            )}
-          </div>
+                  <IconChevron size={16} className="row-chevron" />
+                </button>
+              )}
+              {plan.votePlace && (
+                <button type="button" className="list-row" onClick={() => nav.push({ name: 'places', id: plan.id })}>
+                  <span className="icon-box pink">
+                    <IconHeart size={20} />
+                  </span>
+                  <span className="grow row-text">
+                    <span className="list-title">Голосование за место</span>
+                    <span className="caption">
+                      {leadingPlace
+                        ? `Впереди ${leadingPlace.name}`
+                        : `${plan.places.length} ${plural(plan.places.length, ['вариант', 'варианта', 'вариантов'])} на выбор`}
+                    </span>
+                  </span>
+                  <IconChevron size={16} className="row-chevron" />
+                </button>
+              )}
+              {plan.middle && (
+                <button type="button" className="list-row" onClick={() => nav.push({ name: 'area', id: plan.id })}>
+                  <span className="icon-box">
+                    <IconPin size={20} />
+                  </span>
+                  <span className="grow row-text">
+                    <span className="list-title">{plan.me.area ? 'Район отмечен' : 'Откуда поедете?'}</span>
+                    <span className="caption">{plan.me.area ? 'Точный адрес никто не увидит' : 'Подберём место посередине'}</span>
+                  </span>
+                  <IconChevron size={16} className="row-chevron" />
+                </button>
+              )}
+            </div>
+          </section>
         )}
 
-        {plan.deadline && <div className="caption" style={{ padding: '0 4px' }}>Ответить до {deadlineLabel(plan.deadline)}</div>}
+        {plan.deadline && <div className="caption section-note">Ответить до {deadlineLabel(plan.deadline)}</div>}
         {plan.isOwner && <DeletePlanButton id={plan.id} />}
       </main>
 

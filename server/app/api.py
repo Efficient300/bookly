@@ -25,12 +25,17 @@ class SpaFiles(StaticFiles):
     """Раздаёт собранную Mini App; неизвестные пути отдают index.html."""
 
     async def get_response(self, path: str, scope):
+        # Страницу каждый раз проверяем, иначе Telegram показывает старую версию. Файлы сборки с хешем в имени не меняются.
         try:
-            return await super().get_response(path, scope)
+            response = await super().get_response(path, scope)
+            immutable = Path(path).parts[:1] == ("assets",)
         except HTTPException as exc:
             if exc.status_code != 404:
                 raise
-            return await super().get_response("index.html", scope)
+            response = await super().get_response("index.html", scope)
+            immutable = False
+        response.headers["Cache-Control"] = "public, max-age=31536000, immutable" if immutable else "no-cache"
+        return response
 
 
 def create_app(service: PlanService, cfg: Config, lifespan=None) -> Starlette:
@@ -44,6 +49,7 @@ def create_app(service: PlanService, cfg: Config, lifespan=None) -> Starlette:
                 " ".join(filter(None, [u.get("first_name"), u.get("last_name")])),
                 u.get("username"),
                 u.get("allows_write_to_pm"),
+                u.get("photo_url"),
             )
             return u["id"]
         if cfg.dev_mode and auth.startswith("dev "):
@@ -76,7 +82,12 @@ def create_app(service: PlanService, cfg: Config, lifespan=None) -> Starlette:
 
     async def me(request: Request):
         uid = user_id(request)
-        return JSONResponse({"id": uid, "name": service.user_name(uid)})
+        return JSONResponse({
+            "id": uid,
+            "name": service.user_name(uid),
+            "allowsPm": service.allows_pm(uid),
+            "bot": cfg.bot_username or None,
+        })
 
     async def write_access(request: Request):
         uid = user_id(request)
@@ -146,6 +157,7 @@ def create_app(service: PlanService, cfg: Config, lifespan=None) -> Starlette:
         return JSONResponse({"error": exc.message}, status_code=exc.status)
 
     async def on_init_data_error(request: Request, exc: InitDataError):
+        log.warning("Вход отклонён: %s", exc)
         return JSONResponse({"error": str(exc)}, status_code=401)
 
     async def on_bad_json(request: Request, exc: json.JSONDecodeError):

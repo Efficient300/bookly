@@ -39,7 +39,6 @@ function Screen({ route }: { route: Route }) {
 
 export function App() {
   const [stack, setStack] = useState<Route[]>(initialStack);
-  const backOverride = useRef<(() => boolean) | null>(null);
   const overlayBack = useRef<(() => boolean) | null>(null);
 
   const nav = useMemo<Nav>(
@@ -47,9 +46,6 @@ export function App() {
       push: (route) => setStack((s) => [...s, route]),
       pop: () => setStack((s) => (s.length > 1 ? s.slice(0, -1) : s)),
       reset: (routes) => setStack(routes),
-      setBackOverride: (fn) => {
-        backOverride.current = fn;
-      },
       setOverlayBack: (fn) => {
         overlayBack.current = fn;
       },
@@ -59,7 +55,6 @@ export function App() {
 
   const goBack = () => {
     if (overlayBack.current?.()) return;
-    if (backOverride.current?.()) return;
     nav.pop();
   };
   const goBackRef = useRef(goBack);

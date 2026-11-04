@@ -7,6 +7,7 @@ CREATE TABLE IF NOT EXISTS users (
   name        TEXT NOT NULL,
   username    TEXT,
   allows_pm   INTEGER NOT NULL DEFAULT 0,
+  photo_url   TEXT,
   updated_at  TEXT NOT NULL
 );
 
@@ -85,7 +86,11 @@ def open_db(path: str) -> sqlite3.Connection:
 
 def migrate(db: sqlite3.Connection) -> None:
     """Доводит старые базы до текущей схемы."""
-    added = {"custom_places": {"lat": "REAL", "lng": "REAL"}, "plans": {"chat_id": "INTEGER", "message_id": "INTEGER"}}
+    added = {
+        "custom_places": {"lat": "REAL", "lng": "REAL"},
+        "plans": {"chat_id": "INTEGER", "message_id": "INTEGER"},
+        "users": {"photo_url": "TEXT"},
+    }
     for table, columns in added.items():
         existing = {r["name"] for r in db.execute(f"PRAGMA table_info({table})")}
         for column, kind in columns.items():
