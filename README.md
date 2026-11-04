@@ -19,7 +19,7 @@
 cd server
 python -m venv .venv
 .venv\Scripts\activate
-pip install -r requirements.txt
+pip install -r requirements-dev.txt
 copy .env.example .env
 python -m app.seed
 python -m app.main
@@ -90,6 +90,21 @@ npm run typecheck
 3. Карты — Яндекс (JS API 2.1). Получите ключ «JavaScript API и HTTP Геокодер» в [кабинете разработчика](https://developer.tech.yandex.ru), впишите в `webapp/.env` как `VITE_YANDEX_MAPS_KEY` и пересоберите. Без ключа карта открывается, но это режим для разработки.
 4. Каталог мест — `server/data/places.json`: средний чек в сумах (`avgCheck`) и координаты. Сейчас там вымышленные места в Ташкенте для примера, замените на настоящие.
 5. База — файл `server/data/skhodka.db`, делайте его резервные копии.
+
+## Развёртывание на Raspberry Pi
+
+Нужны Python 3.10+ на Pi, вход по SSH-ключу и туннель Cloudflare. Из корня проекта в Git Bash:
+
+```bash
+bash deploy/deploy.sh user@host bookly.example.com
+```
+
+Скрипт соберёт Mini App, скопирует проект в `~/bookly`, создаст службу `bookly` и добавит маршрут в конфиг
+cloudflared. Node на Pi не нужен, `server/.env` и база при обновлении не перезаписываются.
+При первом запуске из терминала он спросит токен бота; иначе впишите `BOT_TOKEN` и `BOT_USERNAME`
+в `~/bookly/server/.env` и выполните `sudo systemctl restart bookly`.
+
+Если туннель настроен из панели Cloudflare, файла конфига на Pi нет: добавьте Public Hostname на `http://localhost:8787`.
 
 ## Что дальше
 
