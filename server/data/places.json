@@ -1,0 +1,87 @@
+[
+  {
+    "id": "basil",
+    "name": "Траттория «Базилик»",
+    "kind": "Итальянская",
+    "formats": ["eat"],
+    "avgCheck": 180000,
+    "rating": 4.7,
+    "lat": 41.3135,
+    "lng": 69.2768,
+    "address": null,
+    "phone": null,
+    "url": null
+  },
+  {
+    "id": "polka",
+    "name": "Бар «Полка»",
+    "kind": "Бар, закуски",
+    "formats": ["bar", "eat"],
+    "avgCheck": 200000,
+    "rating": 4.5,
+    "lat": 41.3059,
+    "lng": 69.2723,
+    "promo": "−15% компаниям от 4",
+    "partner": true
+  },
+  {
+    "id": "zerno",
+    "name": "Кофейня «Зерно»",
+    "kind": "Кофе, десерты",
+    "formats": ["coffee"],
+    "avgCheck": 60000,
+    "rating": 4.8,
+    "lat": 41.3165,
+    "lng": 69.2852
+  },
+  {
+    "id": "lapsha",
+    "name": "«Лапша и рис»",
+    "kind": "Азиатская",
+    "formats": ["eat"],
+    "avgCheck": 80000,
+    "rating": 4.6,
+    "lat": 41.2998,
+    "lng": 69.2785
+  },
+  {
+    "id": "grill",
+    "name": "«Гриль-двор»",
+    "kind": "Мясо, гриль",
+    "formats": ["eat", "bar"],
+    "avgCheck": 300000,
+    "rating": 4.6,
+    "lat": 41.321,
+    "lng": 69.265
+  },
+  {
+    "id": "strike",
+    "name": "Боулинг «Страйк»",
+    "kind": "Боулинг, бар",
+    "formats": ["active", "bar"],
+    "avgCheck": 150000,
+    "rating": 4.4,
+    "lat": 41.3268,
+    "lng": 69.289
+  },
+  {
+    "id": "key",
+    "name": "Квест-комната «Ключ»",
+    "kind": "Квесты",
+    "formats": ["active"],
+    "avgCheck": 250000,
+    "rating": 4.9,
+    "lat": 41.3092,
+    "lng": 69.2935
+  },
+  {
+    "id": "garden",
+    "name": "Сад «Тихий»",
+    "kind": "Парк, прогулки",
+    "formats": ["walk"],
+    "avgCheck": 0,
+    "rating": null,
+    "lat": 41.3125,
+    "lng": 69.283
+  }
+]

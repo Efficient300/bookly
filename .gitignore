@@ -1,0 +1,8 @@
+node_modules/
+dist/
+.env
+server/.venv/
+__pycache__/
+.pytest_cache/
+server/data/*.db
+server/data/*.db-*

@@ -1,0 +1,13 @@
+{
+  "name": "skhodka",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "webapp"
+  ],
+  "scripts": {
+    "dev": "npm run dev -w webapp",
+    "build": "npm run build -w webapp",
+    "typecheck": "npm run typecheck -w webapp"
+  }
+}
