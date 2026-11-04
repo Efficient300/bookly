@@ -7,7 +7,7 @@ import uvicorn
 from telegram import Update
 
 from .api import create_app
-from .bot import create_bot, setup_menu_button
+from .bot import create_bot, setup_commands, setup_menu_button
 from .config import Config
 from .db import open_db
 from .places import load_places
@@ -31,8 +31,9 @@ def build(cfg: Config):
             await bot_app.initialize()
             await bot_app.start()
             await setup_menu_button(bot_app.bot, cfg)
+            await setup_commands(bot_app.bot)
             await bot_app.updater.start_polling(
-                allowed_updates=[Update.MESSAGE, Update.INLINE_QUERY, Update.CHOSEN_INLINE_RESULT]
+                allowed_updates=[Update.MESSAGE, Update.INLINE_QUERY, Update.CHOSEN_INLINE_RESULT, Update.MY_CHAT_MEMBER]
             )
             scheduler = asyncio.create_task(run_scheduler(service, service.notifier))
             log.info("Бот @%s запущен", bot_app.bot.username)

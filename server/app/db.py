@@ -27,6 +27,8 @@ CREATE TABLE IF NOT EXISTS plans (
   chosen_time        TEXT,
   place_id           TEXT,
   inline_message_id  TEXT,
+  chat_id            INTEGER,        -- группа, куда бот сам отправил карточку
+  message_id         INTEGER,
   reminded_day       INTEGER NOT NULL DEFAULT 0,
   reminded_soon      INTEGER NOT NULL DEFAULT 0,
   bill               TEXT,           -- JSON: {"total":186,"payerId":1,"paid":[3]}
@@ -83,7 +85,9 @@ def open_db(path: str) -> sqlite3.Connection:
 
 def migrate(db: sqlite3.Connection) -> None:
     """Доводит старые базы до текущей схемы."""
-    columns = {r["name"] for r in db.execute("PRAGMA table_info(custom_places)")}
-    for column in ("lat", "lng"):
-        if column not in columns:
-            db.execute(f"ALTER TABLE custom_places ADD COLUMN {column} REAL")
+    added = {"custom_places": {"lat": "REAL", "lng": "REAL"}, "plans": {"chat_id": "INTEGER", "message_id": "INTEGER"}}
+    for table, columns in added.items():
+        existing = {r["name"] for r in db.execute(f"PRAGMA table_info({table})")}
+        for column, kind in columns.items():
+            if column not in existing:
+                db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {kind}")

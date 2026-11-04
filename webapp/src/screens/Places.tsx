@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { FormEvent } from 'react';
 import { avgCheckLabel } from '../../../shared/format.ts';
 import type { LatLng, NewPlace, PlaceView, PlanView } from '../../../shared/types.ts';
@@ -9,7 +9,7 @@ import type { Person } from '../components/MapView.tsx';
 import { PlacePicker, emptyPlace } from '../components/PlacePicker.tsx';
 import { BottomBar, ErrorBox, MainButton, Spinner, useToast } from '../components/ui.tsx';
 import { useNav, usePlan } from '../nav.tsx';
-import { haptic, openLink } from '../telegram.ts';
+import { expandApp, haptic, openLink } from '../telegram.ts';
 
 function people(plan: PlanView): Person[] {
   const list: Person[] = plan.areas.map((a) => ({ ...a }));
@@ -21,6 +21,7 @@ export function Places({ id }: { id: string }) {
   const nav = useNav();
   const toast = useToast();
   const { plan, setPlan, error, reload } = usePlan(id);
+  useEffect(expandApp, []);
   const [focus, setFocus] = useState<LatLng | null>(null);
   const [adding, setAdding] = useState(false);
   const [draft, setDraft] = useState<NewPlace>(emptyPlace);
@@ -141,9 +142,9 @@ export function Places({ id }: { id: string }) {
               <h2 className="h2" style={{ fontSize: 18 }}>
                 Своё место
               </h2>
-              <PlacePicker id="suggest" value={draft} onChange={setDraft} format={plan.format} near={near} onError={toast} />
+              <PlacePicker id="suggest" value={draft} onChange={setDraft} format={plan.format} near={near} />
               <div className="row">
-                <button type="submit" className="btn-small" disabled={!draft.name.trim()}>
+                <button type="submit" className="btn-small" disabled={!draft.name.trim() || draft.lat === null}>
                   Добавить
                 </button>
                 <button type="button" className="btn-small outline" onClick={() => setAdding(false)}>

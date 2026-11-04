@@ -30,6 +30,7 @@ export interface TgWebApp {
     notificationOccurred(type: 'success' | 'error' | 'warning'): void;
   };
   openLink(url: string): void;
+  showConfirm(message: string, cb: (ok: boolean) => void): void;
   switchInlineQuery(query: string, chooseChatTypes?: ChatType[]): void;
   downloadFile?(params: { url: string; file_name: string }, cb?: (accepted: boolean) => void): void;
   requestWriteAccess?(cb?: (allowed: boolean) => void): void;
@@ -69,7 +70,8 @@ export function initTelegram() {
   applyTheme();
   if (!tg || !inTelegram) return;
   tg.ready();
-  tg.expand();
+  // Прямые ссылки из чатов открываются снизу на половину экрана (mode=compact), их не разворачиваем.
+  if (!tg.initDataUnsafe.start_param) tg.expand();
   // Иначе свайп по сетке слотов сворачивает Mini App.
   if (supports('7.7')) tg.disableVerticalSwipes?.();
   tg.onEvent('themeChanged', applyTheme);
@@ -81,6 +83,11 @@ export function startParam(): string | null {
   return tg?.initDataUnsafe.start_param ?? query.get('startapp') ?? query.get('tgWebAppStartParam');
 }
 
+/** Разворачивает Mini App на весь экран: карте на половине экрана тесно. */
+export function expandApp() {
+  if (tg && inTelegram) tg.expand();
+}
+
 export const haptic = {
   select: () => inTelegram && tg?.HapticFeedback.selectionChanged(),
   success: () => inTelegram && tg?.HapticFeedback.notificationOccurred('success'),
@@ -90,6 +97,13 @@ export const haptic = {
 export function openLink(url: string) {
   if (tg && inTelegram) tg.openLink(url);
   else window.open(url, '_blank', 'noopener');
+}
+
+export function confirmDialog(message: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    if (tg && supports('6.2')) tg.showConfirm(message, resolve);
+    else resolve(window.confirm(message));
+  });
 }
 
 /** Открывает выбор чата и подставляет карточку сходки (нужен inline-режим у бота). */

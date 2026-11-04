@@ -22,7 +22,7 @@ const DEADLINES = [
 const opts = <T extends string>(labels: Record<T, string>) =>
   (Object.keys(labels) as T[]).map((value) => ({ value, label: labels[value] }));
 
-export function Create({ template }: { template?: Partial<NewPlan> }) {
+export function Create({ template, chatId }: { template?: Partial<NewPlan>; chatId?: number }) {
   const nav = useNav();
   const toast = useToast();
   const [step, setStep] = useState(1);
@@ -67,7 +67,7 @@ export function Create({ template }: { template?: Partial<NewPlan> }) {
   async function submit() {
     setBusy(true);
     try {
-      const { id } = await api.create({
+      const { id, posted } = await api.create({
         title: title.trim(),
         format,
         budget,
@@ -79,11 +79,13 @@ export function Create({ template }: { template?: Partial<NewPlan> }) {
         middle,
         placeId: null,
         place: needsPlace ? { ...place, name: place.name.trim() } : null,
+        chatId: chatId ?? null,
       });
       haptic.success();
       nav.reset([{ name: 'home' }, { name: 'plan', id }]);
       void enableReminders();
-      if (!shareToChat(id)) toast('Сходка создана — отправьте ссылку друзьям');
+      if (posted) toast('Карточка отправлена в группу');
+      else if (!shareToChat(id)) toast('Сходка создана — отправьте ссылку друзьям');
     } catch (e) {
       haptic.error();
       toast((e as Error).message);
@@ -228,9 +230,9 @@ export function Create({ template }: { template?: Partial<NewPlan> }) {
               <section className="section">
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
                   <h2 className="h2">Где встречаемся</h2>
-                  <div className="caption">Найдите место в Яндекс Картах, вернитесь сюда, впишите название и отметьте точку.</div>
+                  <div className="caption">Найдите заведение или поставьте точку на карте.</div>
                 </div>
-                <PlacePicker id="meet" value={place} onChange={setPlace} format={format} onError={toast} />
+                <PlacePicker id="meet" value={place} onChange={setPlace} format={format} />
               </section>
             )}
             <div className="card">
@@ -246,7 +248,9 @@ export function Create({ template }: { template?: Partial<NewPlan> }) {
               {needsPlace && place.name.trim() && <div className="caption">{place.name.trim()}</div>}
             </div>
             <p className="caption" style={{ margin: '0 4px', lineHeight: 1.5 }}>
-              После создания выберите чат — бот пришлёт туда карточку, и друзья ответят в пару касаний.
+              {chatId
+                ? 'После создания бот пришлёт карточку в группу, и все ответят в пару касаний.'
+                : 'После создания выберите чат — бот пришлёт туда карточку, и друзья ответят в пару касаний.'}
             </p>
           </>
         )}
@@ -262,12 +266,12 @@ export function Create({ template }: { template?: Partial<NewPlan> }) {
           <>
             {needsPlace && !placeReady && (
               <div className="caption" style={{ textAlign: 'center' }}>
-                Укажите название места и отметьте его на карте
+                Выберите место на карте
               </div>
             )}
             <MainButton onClick={submit} busy={busy} disabled={needsPlace && !placeReady}>
               <IconSend size={20} />
-              Создать и отправить в чат
+              {chatId ? 'Создать и отправить в группу' : 'Создать и отправить в чат'}
             </MainButton>
           </>
         )}

@@ -39,16 +39,14 @@ export function Home() {
     .sort((a, b) => `${a.chosen!.date}T${a.chosen!.time}`.localeCompare(`${b.chosen!.date}T${b.chosen!.time}`));
   const [next, ...laterPlans] = upcoming;
   const waiting = plans.filter((p) => p.needsAnswer);
-  const collecting = plans.filter((p) => p.status === 'collecting' && !p.needsAnswer);
-  const past = plans.filter((p) => p.status === 'done').slice(0, 5);
+  const collecting = plans.filter((p) => p.status === 'collecting' && !p.needsAnswer && !p.expired);
+  const past = plans.filter((p) => p.status === 'done' || p.expired).slice(0, 5);
   const open = (id: string) => nav.push({ name: 'plan', id });
 
   return (
     <div className="screen">
-      <header className="row" style={{ justifyContent: 'space-between', padding: '20px 20px 4px' }}>
-        <div className="wordmark">
-          сходка<span>.</span>
-        </div>
+      <header className="row" style={{ justifyContent: 'space-between', padding: '16px 20px 0' }}>
+        <h1 className="h1">Сходки</h1>
         {me && <Avatar name={me.name} seed={me.id} size={40} />}
       </header>
 
@@ -159,7 +157,7 @@ export function Home() {
                   <span className="grow" style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
                     <span className="list-title">{p.title}</span>
                     <span className="caption">
-                      {p.chosen ? dayLabel(p.chosen.date) : ''}
+                      {p.chosen ? dayLabel(p.chosen.date) : 'Время не выбрали'}
                       {p.placeName ? ` · ${p.placeName}` : ''}
                     </span>
                   </span>

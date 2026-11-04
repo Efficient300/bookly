@@ -87,7 +87,7 @@ npm run typecheck
 
 1. `npm run build` — сборка попадёт в `webapp/dist`, и Python-сервер сам её раздаёт.
 2. Один процесс `python -m app.main` за HTTPS (Caddy или nginx). API и Mini App на одном адресе.
-3. Карты — Яндекс (JS API 2.1). Получите ключ «JavaScript API и HTTP Геокодер» в [кабинете разработчика](https://developer.tech.yandex.ru), впишите в `webapp/.env` как `VITE_YANDEX_MAPS_KEY` и пересоберите. Без ключа карта открывается, но это режим для разработки.
+3. Карты — Яндекс (JS API 2.1). Получите ключ «JavaScript API и HTTP Геокодер» в [кабинете разработчика](https://developer.tech.yandex.ru), впишите в `webapp/.env` как `VITE_YANDEX_MAPS_KEY` и пересоберите. Без ключа открывается только карта: точку поставить можно, а поиск мест и адресов выключен.
 4. Каталог мест — `server/data/places.json`: средний чек в сумах (`avgCheck`) и координаты. Сейчас там вымышленные места в Ташкенте для примера, замените на настоящие.
 5. База — файл `server/data/skhodka.db`, делайте его резервные копии.
 

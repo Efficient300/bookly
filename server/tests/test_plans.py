@@ -163,3 +163,80 @@ def test_old_database_gets_point_columns(tmp_path):
     db = open_db(str(path))
     row = db.execute("SELECT name, lat, lng FROM custom_places").fetchone()
     assert (row["name"], row["lat"], row["lng"]) == ("Старое место", None, None)
+
+
+class Spy:
+    def __init__(self):
+        self.deleted = None
+        self.nudged = None
+
+    def plan_changed(self, plan_id): pass
+    def plan_confirmed(self, plan_id): pass
+    def remind(self, plan_id, kind): pass
+    def nudge(self, plan_id, user_ids): self.nudged = user_ids
+    def plan_deleted(self, card, user_ids): self.deleted = (card["title"], user_ids)
+
+
+def test_only_owner_deletes_and_everything_goes(service: PlanService):
+    service.notifier = Spy()
+    plan_id = service.create(1, BASE_PLAN)
+    service.update_me(plan_id, 2, {"status": "go"})
+    service.update_me(plan_id, 3, {"status": "no"})
+    service.set_allows_pm(2, True)
+    service.set_allows_pm(3, True)
+    service.suggest_place(plan_id, 2, {"name": "Кафе"})
+
+    with pytest.raises(HttpError) as err:
+        service.delete(plan_id, 2)
+    assert err.value.status == 403
+
+    service.delete(plan_id, 1)
+    assert service.notifier.deleted == ("Тест", [2]), "пишем только тем, кто собирался идти"
+    with pytest.raises(HttpError) as err:
+        service.view(plan_id, 1)
+    assert err.value.status == 404
+    assert service.list_for_user(2) == []
+    for table in ("members", "votes", "custom_places"):
+        assert service.db.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] == 0
+
+
+def test_group_plans_list_hides_finished(service: PlanService):
+    active = service.create(1, BASE_PLAN)
+    expired = service.create(1, {**BASE_PLAN, "days": ["2020-01-04"]})
+    other = service.create(1, BASE_PLAN)
+    service.set_chat_message(active, -100, 5)
+    service.set_chat_message(expired, -100, 6)
+    service.set_chat_message(other, -200, 7)
+
+    assert [p["id"] for p in service.list_for_chat(-100)] == [active]
+    assert service.view(active, 1)["inGroup"] is True
+
+
+def test_expired_collecting_does_not_wait_for_answer(service: PlanService):
+    plan_id = service.create(1, {**BASE_PLAN, "days": ["2020-01-04"]})
+    service.view(plan_id, 2)
+    summary = service.list_for_user(2)[0]
+    assert summary["expired"] is True
+    assert summary["needsAnswer"] is False
+
+
+def test_nudge_counts_only_reachable(service: PlanService):
+    service.notifier = Spy()
+    plan_id = service.create(1, BASE_PLAN)
+    service.view(plan_id, 2)
+    service.view(plan_id, 3)
+    assert service.nudge(plan_id, 1) == 0, "никто не разрешил писать в личку"
+
+    service.set_allows_pm(3, True)
+    assert service.nudge(plan_id, 1) == 1
+    assert service.notifier.nudged == [3]
+
+    service.set_chat_message(plan_id, -100, 5)
+    assert service.nudge(plan_id, 1) == 2, "плюс сообщение в группу"
+
+
+def test_owner_goes_after_confirming(service: PlanService):
+    plan_id = service.create(1, BASE_PLAN)
+    service.update_me(plan_id, 2, {"status": "go", "slots": {"2030-01-05T20:00": 1}})
+    view = service.confirm(plan_id, 1, "2030-01-05T20:00", None)
+    assert next(m for m in view["members"] if m["id"] == 1)["status"] == "go"

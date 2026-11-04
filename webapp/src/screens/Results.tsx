@@ -55,7 +55,7 @@ export function Results({ id }: { id: string }) {
   async function nudge() {
     try {
       const { sent } = await api.nudge(id);
-      toast(sent ? 'Напомнили в личке' : 'Некому напоминать');
+      toast(sent ? 'Напомнили' : 'Некому напоминать: участники не разрешили писать в личку');
     } catch (e) {
       toast((e as Error).message);
     }
@@ -110,7 +110,7 @@ export function Results({ id }: { id: string }) {
               ))}
             </div>
           )}
-          {pending.length > 0 && (
+          {(pending.length > 0 || plan.inGroup) && (
             <button type="button" className="btn-text" onClick={nudge}>
               <IconBell size={18} />
               Напомнить, кто не ответил

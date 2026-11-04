@@ -7,18 +7,28 @@ from urllib.parse import urlencode
 
 from telegram import (
     Bot,
+    BotCommand,
+    BotCommandScopeAllGroupChats,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
     InlineQueryResultArticle,
     InlineQueryResultsButton,
     InputTextMessageContent,
     MenuButtonWebApp,
+    ReplyParameters,
     Update,
     WebAppInfo,
 )
 from telegram.constants import ParseMode
 from telegram.error import BadRequest, TelegramError
-from telegram.ext import Application, ChosenInlineResultHandler, CommandHandler, ContextTypes, InlineQueryHandler
+from telegram.ext import (
+    Application,
+    ChatMemberHandler,
+    ChosenInlineResultHandler,
+    CommandHandler,
+    ContextTypes,
+    InlineQueryHandler,
+)
 
 from .config import Config
 from .formatting import deadline_label, join_names, slot_label
@@ -70,6 +80,15 @@ def open_button(cfg: Config, start_param: str, text: str) -> InlineKeyboardMarku
     return InlineKeyboardMarkup([[InlineKeyboardButton(text, web_app=WebAppInfo(url))]])
 
 
+def group_menu(service: PlanService, cfg: Config, chat_id: int) -> tuple[str, InlineKeyboardMarkup]:
+    """Сообщение для группы: создать сходку и открыть текущие. Сходка сама придёт карточкой в эту группу."""
+    plans = service.list_for_chat(chat_id)[:5]
+    rows = [[InlineKeyboardButton(p["title"], url=cfg.direct_link(f"p_{p['id']}"))] for p in plans]
+    rows.append([InlineKeyboardButton("Создать сходку", url=cfg.direct_link(f"new_{chat_id}"))])
+    text = "Сходки этой группы:" if plans else "Соберём всех: отметьте, когда удобно, и выберем место."
+    return text, InlineKeyboardMarkup(rows)
+
+
 class BotNotifier:
     """Уведомления из PlanService. Вызывается внутри event loop, сама ставит отправку в фон."""
 
@@ -85,22 +104,63 @@ class BotNotifier:
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
 
+    async def _edit_card(self, card: dict, text: str, markup: InlineKeyboardMarkup | None) -> None:
+        # Карточка могла уйти и через inline-режим, и напрямую в группу: обновляем обе.
+        targets = []
+        if card["inlineMessageId"]:
+            targets.append({"inline_message_id": card["inlineMessageId"]})
+        if card["chatId"] and card["messageId"]:
+            targets.append({"chat_id": card["chatId"], "message_id": card["messageId"]})
+        for target in targets:
+            try:
+                await self.app.bot.edit_message_text(text, parse_mode=ParseMode.HTML, reply_markup=markup, **target)
+            except BadRequest as err:
+                if "not modified" not in str(err):
+                    log.warning("Не удалось обновить карточку %s: %s", card["id"], err)
+            except TelegramError as err:
+                log.warning("Не удалось обновить карточку %s: %s", card["id"], err)
+
     async def _refresh_card(self, plan_id: str) -> None:
-        card = self.service.card(plan_id)
-        if not card["inlineMessageId"]:
+        try:
+            card = self.service.card(plan_id)
+        except HttpError:
+            return  # Сходку уже удалили.
+        await self._edit_card(card, card_text(card, self.cfg.tz), card_keyboard(card, self.cfg))
+
+    async def _to_group(self, card: dict, text: str, with_button: bool = True) -> None:
+        """Новое сообщение в группу: правка карточки участникам уведомления не присылает."""
+        if not card["chatId"]:
             return
         try:
-            await self.app.bot.edit_message_text(
-                card_text(card, self.cfg.tz),
-                inline_message_id=card["inlineMessageId"],
+            await self.app.bot.send_message(
+                card["chatId"],
+                text,
                 parse_mode=ParseMode.HTML,
-                reply_markup=card_keyboard(card, self.cfg),
+                reply_markup=card_keyboard(card, self.cfg) if with_button else None,
+                reply_parameters=(
+                    ReplyParameters(card["messageId"], allow_sending_without_reply=True) if card["messageId"] else None
+                ),
             )
-        except BadRequest as err:
-            if "not modified" not in str(err):
-                log.warning("Не удалось обновить карточку %s: %s", plan_id, err)
         except TelegramError as err:
-            log.warning("Не удалось обновить карточку %s: %s", plan_id, err)
+            log.warning("Не удалось написать в группу %s: %s", card["chatId"], err)
+
+    async def post_card(self, plan_id: str, chat_id: int, user_id: int) -> bool:
+        """Отправляет карточку в группу. id группы приходит из ссылки, поэтому проверяем, что автор в ней состоит."""
+        if chat_id >= 0:
+            return False
+        try:
+            member = await self.app.bot.get_chat_member(chat_id, user_id)
+            if member.status in ("left", "kicked"):
+                return False
+            card = self.service.card(plan_id)
+            message = await self.app.bot.send_message(
+                chat_id, card_text(card, self.cfg.tz), parse_mode=ParseMode.HTML, reply_markup=card_keyboard(card, self.cfg)
+            )
+        except TelegramError as err:
+            log.warning("Не удалось отправить карточку в группу %s: %s", chat_id, err)
+            return False
+        self.service.set_chat_message(plan_id, chat_id, message.message_id)
+        return True
 
     async def _dm(self, user_ids: list[int], text: str, plan_id: str) -> None:
         for uid in user_ids:
@@ -126,13 +186,17 @@ class BotNotifier:
         ids = self.service.recipients(plan_id, lambda m: not m["isOwner"] and m["status"] != "no")
         where = f", {escape(card['placeName'])}" if card["placeName"] else ""
         when = slot_label(card["chosen"]["date"], card["chosen"]["time"])
-        self._spawn(self._dm(ids, f"<b>{escape(card['title'])}</b>: решено — {when}{where}", plan_id))
+        text = f"<b>{escape(card['title'])}</b>: решено — {when}{where}"
+        self._spawn(self._dm(ids, text, plan_id))
+        self._spawn(self._to_group(card, text))
 
     def nudge(self, plan_id: str, user_ids: list[int]) -> None:
         card = self.service.card(plan_id)
         allowed = set(self.service.recipients(plan_id, lambda m: True))
         text = f"Ждём ваш ответ: <b>{escape(card['title'])}</b>. Когда вам удобно?"
         self._spawn(self._dm([u for u in user_ids if u in allowed], text, plan_id))
+        names = f" {escape(join_names(card['pending']))}," if card["pending"] else ""
+        self._spawn(self._to_group(card, f"Ждём ответы{names} по сходке <b>{escape(card['title'])}</b>."))
 
     def remind(self, plan_id: str, kind: str) -> None:
         card = self.service.card(plan_id)
@@ -142,7 +206,25 @@ class BotNotifier:
         when = "Завтра" if kind == "day" else "Скоро"
         where = f" — {escape(card['placeName'])}" if card["placeName"] else ""
         slot = slot_label(card["chosen"]["date"], card["chosen"]["time"])
-        self._spawn(self._dm(ids, f"{when}: <b>{escape(card['title'])}</b>, {slot}{where}. Всё в силе?", plan_id))
+        text = f"{when}: <b>{escape(card['title'])}</b>, {slot}{where}. Всё в силе?"
+        self._spawn(self._dm(ids, text, plan_id))
+        self._spawn(self._to_group(card, text))
+
+    def plan_deleted(self, card: dict, user_ids: list[int]) -> None:
+        if timer := self._timers.pop(card["id"], None):
+            timer.cancel()
+        text = f"<s>{escape(card['title'])}</s>\nСходка отменена"
+        self._spawn(self._edit_card(card, text, None))
+        if card["status"] == "confirmed":
+            self._spawn(self._to_group(card, f"Сходка <b>{escape(card['title'])}</b> отменена", with_button=False))
+        self._spawn(self._notify_deleted(user_ids, text))
+
+    async def _notify_deleted(self, user_ids: list[int], text: str) -> None:
+        for uid in user_ids:
+            try:
+                await self.app.bot.send_message(uid, text, parse_mode=ParseMode.HTML)
+            except TelegramError as err:
+                log.warning("Не удалось написать %s: %s", uid, err)
 
 
 async def setup_menu_button(bot: Bot, cfg: Config) -> None:
@@ -153,6 +235,16 @@ async def setup_menu_button(bot: Bot, cfg: Config) -> None:
         log.warning("Не удалось поставить кнопку Mini App: %s. Проверьте WEBAPP_URL — нужен адрес https.", e)
 
 
+async def setup_commands(bot: Bot) -> None:
+    """Подсказка команд в группах: набрал «/» — видишь, как открыть сходки."""
+    try:
+        await bot.set_my_commands(
+            [BotCommand("plan", "Создать сходку или открыть текущие")], scope=BotCommandScopeAllGroupChats()
+        )
+    except TelegramError as e:
+        log.warning("Не удалось задать команды бота: %s", e)
+
+
 def create_bot(service: PlanService, cfg: Config) -> tuple[Application, BotNotifier]:
     app = Application.builder().token(cfg.bot_token).build()
 
@@ -160,10 +252,8 @@ def create_bot(service: PlanService, cfg: Config) -> tuple[Application, BotNotif
         payload = context.args[0] if context.args else ""
         chat = update.effective_chat
         if chat and chat.type != "private":
-            await update.effective_message.reply_text(
-                "Соберём всех: отметьте, когда удобно, и выберем место.",
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Создать сходку", url=cfg.direct_link("new"))]]),
-            )
+            text, markup = group_menu(service, cfg, chat.id)
+            await update.effective_message.reply_text(text, reply_markup=markup)
             return
         text = "Открыть сходку" if payload.startswith("p_") else "Открыть Сходку"
         await update.effective_message.reply_text(
@@ -173,9 +263,35 @@ def create_bot(service: PlanService, cfg: Config) -> tuple[Application, BotNotif
         )
 
     async def plan_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        await update.effective_message.reply_text(
-            "Соберём всех: отметьте, когда удобно, и выберем место.",
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Создать сходку", url=cfg.direct_link("new"))]]),
+        chat = update.effective_chat
+        if chat.type == "private":
+            await update.effective_message.reply_text(
+                "Откройте приложение и создайте сходку.", reply_markup=open_button(cfg, "new", "Создать сходку")
+            )
+            return
+        text, markup = group_menu(service, cfg, chat.id)
+        await update.effective_message.reply_text(text, reply_markup=markup)
+
+    # Бота добавили в группу — сразу показываем, как им пользоваться.
+    async def added_to_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        change = update.my_chat_member
+        was_out = change.old_chat_member.status in ("left", "kicked")
+        is_in = change.new_chat_member.status not in ("left", "kicked")
+        if not (was_out and is_in and change.chat.type in ("group", "supergroup")):
+            return
+        text, markup = group_menu(service, cfg, change.chat.id)
+        try:
+            await context.bot.send_message(change.chat.id, text, reply_markup=markup)
+        except TelegramError as err:
+            log.warning("Не удалось поздороваться в группе %s: %s", change.chat.id, err)
+
+    def inline_article(card: dict) -> InlineQueryResultArticle:
+        return InlineQueryResultArticle(
+            id=card["id"],
+            title=f"Отправить «{card['title']}»",
+            description=card["meta"],
+            input_message_content=InputTextMessageContent(card_text(card, cfg.tz), parse_mode=ParseMode.HTML),
+            reply_markup=card_keyboard(card, cfg),
         )
 
     # Mini App вызывает switchInlineQuery("p_<id>") — здесь отдаём карточку для выбранного чата.
@@ -189,26 +305,19 @@ def create_bot(service: PlanService, cfg: Config) -> tuple[Application, BotNotif
             except HttpError:
                 card = None
         if not card:
+            # Просто «@бот» в чате — предлагаем свои актуальные сходки.
+            mine = [
+                p for p in service.list_for_user(query.from_user.id)
+                if p["isOwner"] and p["status"] != "done" and not p["expired"]
+            ]
             await query.answer(
-                [],
+                [inline_article(service.card(p["id"])) for p in mine[:10]],
                 cache_time=0,
                 is_personal=True,
                 button=InlineQueryResultsButton("Создать сходку", web_app=WebAppInfo(f"{cfg.webapp_url}?startapp=new")),
             )
             return
-        await query.answer(
-            [
-                InlineQueryResultArticle(
-                    id=card["id"],
-                    title=f"Отправить «{card['title']}»",
-                    description=card["meta"],
-                    input_message_content=InputTextMessageContent(card_text(card, cfg.tz), parse_mode=ParseMode.HTML),
-                    reply_markup=card_keyboard(card, cfg),
-                )
-            ],
-            cache_time=0,
-            is_personal=True,
-        )
+        await query.answer([inline_article(card)], cache_time=0, is_personal=True)
 
     # Нужен /setinlinefeedback в @BotFather — иначе id сообщения не придёт и карточка не будет обновляться.
     async def chosen_result(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -218,6 +327,7 @@ def create_bot(service: PlanService, cfg: Config) -> tuple[Application, BotNotif
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("plan", plan_command))
+    app.add_handler(ChatMemberHandler(added_to_chat, ChatMemberHandler.MY_CHAT_MEMBER))
     app.add_handler(InlineQueryHandler(inline_query))
     app.add_handler(ChosenInlineResultHandler(chosen_result))
     return app, BotNotifier(app, service, cfg)

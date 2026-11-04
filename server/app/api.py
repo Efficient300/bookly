@@ -86,11 +86,20 @@ def create_app(service: PlanService, cfg: Config, lifespan=None) -> Starlette:
     async def plans(request: Request):
         uid = user_id(request)
         if request.method == "POST":
-            return JSONResponse({"id": service.create(uid, await body(request))}, status_code=201)
+            data = await body(request)
+            plan_id = service.create(uid, data)
+            chat_id = data.get("chatId")
+            # Mini App, открытая кнопкой из группы, передаёт id группы: бот сам отправит туда карточку.
+            posted = type(chat_id) is int and await service.notifier.post_card(plan_id, chat_id, uid)
+            return JSONResponse({"id": plan_id, "posted": posted}, status_code=201)
         return JSONResponse(service.list_for_user(uid))
 
     async def plan(request: Request):
-        return JSONResponse(service.view(pid(request), user_id(request)))
+        uid = user_id(request)
+        if request.method == "DELETE":
+            service.delete(pid(request), uid)
+            return JSONResponse({"ok": True})
+        return JSONResponse(service.view(pid(request), uid))
 
     async def update_me(request: Request):
         uid = user_id(request)
@@ -151,7 +160,7 @@ def create_app(service: PlanService, cfg: Config, lifespan=None) -> Starlette:
         Route("/api/me", me, methods=["GET"]),
         Route("/api/me/write-access", write_access, methods=["POST"]),
         Route("/api/plans", plans, methods=["GET", "POST"]),
-        Route("/api/plans/{id}", plan, methods=["GET"]),
+        Route("/api/plans/{id}", plan, methods=["GET", "DELETE"]),
         Route("/api/plans/{id}/me", update_me, methods=["PATCH"]),
         Route("/api/plans/{id}/votes", votes, methods=["POST"]),
         Route("/api/plans/{id}/places", suggest, methods=["POST"]),

@@ -78,3 +78,18 @@ def test_bad_json_and_unknown_plan():
     headers = {"Authorization": "dev 1", "Content-Type": "application/json"}
     assert client.post("/api/plans", headers=headers, content="{").status_code == 400
     assert client.get("/api/plans/nope", headers=headers).status_code == 404
+
+
+def test_delete_plan_over_http():
+    client = make_client()
+    owner, friend = tma_header(1001, "Аня"), tma_header(1002, "Тимур")
+    created = client.post("/api/plans", headers=owner, json={
+        "title": "Кофе", "format": "eat", "budget": "any", "duration": "1-2", "votePlace": True, "middle": False,
+        "days": ["2030-01-05"], "times": ["12:00"], "deadlineHours": None, "placeId": None, "chatId": -100,
+    }).json()
+    assert created["posted"] is False, "без бота карточку отправить некому"
+
+    url = f"/api/plans/{created['id']}"
+    assert client.delete(url, headers=friend).status_code == 403
+    assert client.delete(url, headers=owner).json() == {"ok": True}
+    assert client.get(url, headers=owner).status_code == 404

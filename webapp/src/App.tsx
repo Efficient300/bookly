@@ -14,6 +14,9 @@ function initialStack(): Route[] {
   const param = startParam();
   if (param?.startsWith('p_')) return [{ name: 'home' }, { name: 'plan', id: param.slice(2) }];
   if (param === 'new') return [{ name: 'home' }, { name: 'create' }];
+  // new_<id группы> — создание из кнопки в группе.
+  const group = param?.match(/^new_(-\d+)$/);
+  if (group) return [{ name: 'home' }, { name: 'create', chatId: Number(group[1]) }];
   return [{ name: 'home' }];
 }
 
@@ -22,7 +25,7 @@ function Screen({ route }: { route: Route }) {
     case 'home':
       return <Home />;
     case 'create':
-      return <Create template={route.template} />;
+      return <Create template={route.template} chatId={route.chatId} />;
     case 'plan':
       return <PlanScreen id={route.id} />;
     case 'results':
@@ -37,6 +40,7 @@ function Screen({ route }: { route: Route }) {
 export function App() {
   const [stack, setStack] = useState<Route[]>(initialStack);
   const backOverride = useRef<(() => boolean) | null>(null);
+  const overlayBack = useRef<(() => boolean) | null>(null);
 
   const nav = useMemo<Nav>(
     () => ({
@@ -46,11 +50,15 @@ export function App() {
       setBackOverride: (fn) => {
         backOverride.current = fn;
       },
+      setOverlayBack: (fn) => {
+        overlayBack.current = fn;
+      },
     }),
     [],
   );
 
   const goBack = () => {
+    if (overlayBack.current?.()) return;
     if (backOverride.current?.()) return;
     nav.pop();
   };

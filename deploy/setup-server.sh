@@ -62,13 +62,17 @@ sudo systemctl restart "$service"
 config=$(ls /etc/cloudflared/config.yml "$HOME/.cloudflared/config.yml" 2>/dev/null | head -1 || true)
 if [ -n "$config" ]; then
   grep '^tunnel:' "$config" || true
+  before=$(sudo sha256sum "$config")
   sudo python3 "$app/deploy/add_ingress.py" "$config" "$domain" "http://localhost:$port"
   if ! sudo cloudflared tunnel --config "$config" ingress validate; then
     [ -f "$config.bak" ] && sudo cp "$config.bak" "$config"
     echo "Конфиг не прошёл проверку, вернул прежний."
     exit 1
   fi
-  if systemctl cat cloudflared > /dev/null 2>&1; then
+  # Туннель обслуживает и другие сайты: перезапускаем, только если конфиг изменился.
+  if [ "$before" = "$(sudo sha256sum "$config")" ]; then
+    :
+  elif systemctl cat cloudflared > /dev/null 2>&1; then
     sudo systemctl restart cloudflared
   else
     echo "Служба cloudflared не найдена: перезапустите туннель вручную."

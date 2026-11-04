@@ -43,6 +43,8 @@ export interface NewPlan {
   placeId: string | null;
   /** Своё место организатора. Обязательно, если нет ни голосования, ни поиска середины. */
   place?: NewPlace | null;
+  /** Группа, из которой открыли создание: бот сам отправит туда карточку. */
+  chatId?: number | null;
 }
 
 export interface Member {
@@ -114,6 +116,8 @@ export interface PlanView {
   middle: boolean;
   /** Место, которое организатор выбрал при создании или при подтверждении. */
   placeId: string | null;
+  /** Карточка сходки отправлена ботом в группу. */
+  inGroup: boolean;
   status: PlanStatus;
   deadline: string | null;
   isOwner: boolean;
@@ -140,6 +144,8 @@ export interface PlanSummary {
   status: PlanStatus;
   isOwner: boolean;
   needsAnswer: boolean;
+  /** Сбор не подтвердили, а все дни уже прошли. */
+  expired: boolean;
   deadline: string | null;
   chosen: { date: string; time: string } | null;
   placeName: string | null;

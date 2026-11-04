@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { dayLabel } from '../../../shared/format.ts';
 import type { PlanView, Review } from '../../../shared/types.ts';
 import { api } from '../api.ts';
+import { DeletePlanButton } from '../components/DeletePlanButton.tsx';
 import { IconCheck, IconRepeat, IconStar } from '../components/icons.tsx';
 import { Avatar, BottomBar, MainButton, useToast } from '../components/ui.tsx';
 import { useNav } from '../nav.tsx';
@@ -199,6 +200,7 @@ export function After({ plan, setPlan }: { plan: PlanView; setPlan: (p: PlanView
             )}
           </section>
         )}
+        {plan.isOwner && <DeletePlanButton id={plan.id} />}
       </main>
 
       <BottomBar>

@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { LatLng } from '../../../shared/types.ts';
 import { api } from '../api.ts';
 import { IconMapPinFilled, IconTarget } from '../components/icons.tsx';
@@ -6,13 +6,14 @@ import { MapView } from '../components/MapView.tsx';
 import { BottomBar, ErrorBox, MainButton, Spinner, useToast } from '../components/ui.tsx';
 import { CITY_CENTER } from '../lib/ymaps.ts';
 import { useNav, usePlan } from '../nav.tsx';
-import { getLocation, haptic } from '../telegram.ts';
+import { expandApp, getLocation, haptic } from '../telegram.ts';
 
 /** Выбор района «откуда поеду»: двигаем карту под булавкой. Храним с точностью ~1 км. */
 export function Area({ id }: { id: string }) {
   const nav = useNav();
   const toast = useToast();
   const { plan, setPlan, error, reload } = usePlan(id);
+  useEffect(expandApp, []);
   const center = useRef<LatLng | null>(null);
   const [focus, setFocus] = useState<LatLng | null>(null);
   const [busy, setBusy] = useState(false);

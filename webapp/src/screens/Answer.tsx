@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import {
   DURATION_LABELS,
   FORMAT_LABELS,
@@ -10,6 +10,7 @@ import {
 } from '../../../shared/format.ts';
 import type { MemberStatus, PlanView, SlotValue } from '../../../shared/types.ts';
 import { api, enableReminders, planLink } from '../api.ts';
+import { DeletePlanButton } from '../components/DeletePlanButton.tsx';
 import { IconChevron, IconHeart, IconPin, IconSend } from '../components/icons.tsx';
 import { SlotGrid, SlotLegend } from '../components/SlotGrid.tsx';
 import { Avatar, AvatarStack, BottomBar, MainButton, Segmented, useToast } from '../components/ui.tsx';
@@ -25,18 +26,24 @@ const STATUS_OPTIONS: { value: MemberStatus; label: string }[] = [
 const same = (a: Record<string, SlotValue>, b: Record<string, SlotValue>) =>
   JSON.stringify(Object.entries(a).sort()) === JSON.stringify(Object.entries(b).sort());
 
+type Draft = { status: MemberStatus | null; slots: Record<string, SlotValue> };
+// Неотправленный ответ переживает переход на карту или к голосованию и обратно.
+const drafts = new Map<string, Draft>();
+
 /** Экран участника, пока идёт сбор: статус, сетка слотов, район, голосование. */
 export function Answer({ plan, setPlan }: { plan: PlanView; setPlan: (p: PlanView) => void }) {
   const nav = useNav();
   const toast = useToast();
-  const [status, setStatus] = useState<MemberStatus | null>(plan.me.status);
-  const [slots, setSlots] = useState<Record<string, SlotValue>>(plan.me.slots);
+  const [draft, setDraft] = useState<Draft | null>(() => drafts.get(plan.id) ?? null);
   const [busy, setBusy] = useState(false);
-
-  useEffect(() => {
-    setStatus(plan.me.status);
-    setSlots(plan.me.slots);
-  }, [plan.me.status, plan.me.slots]);
+  const status = draft ? draft.status : plan.me.status;
+  const slots = draft ? draft.slots : plan.me.slots;
+  const change = (next: Draft) => {
+    drafts.set(plan.id, next);
+    setDraft(next);
+  };
+  const setStatus = (next: MemberStatus) => change({ status: next, slots });
+  const setSlots = (next: Record<string, SlotValue>) => change({ status, slots: next });
 
   const answered = plan.me.status !== null;
   const dirty = status !== plan.me.status || !same(slots, plan.me.slots);
@@ -62,6 +69,8 @@ export function Answer({ plan, setPlan }: { plan: PlanView; setPlan: (p: PlanVie
     try {
       const next = await api.updateMe(plan.id, { status, slots: status === 'no' ? {} : slots });
       setPlan(next);
+      drafts.delete(plan.id);
+      setDraft(null);
       haptic.success();
       toast(answered ? 'Ответ обновлён' : 'Ответ отправлен');
       void enableReminders();
@@ -203,6 +212,7 @@ export function Answer({ plan, setPlan }: { plan: PlanView; setPlan: (p: PlanVie
         )}
 
         {plan.deadline && <div className="caption" style={{ padding: '0 4px' }}>Ответить до {deadlineLabel(plan.deadline)}</div>}
+        {plan.isOwner && <DeletePlanButton id={plan.id} />}
       </main>
 
       <BottomBar>

@@ -1,23 +1,7 @@
 import { DURATION_HOURS } from '../../../shared/format.ts';
-import type { Duration, Format, LatLng } from '../../../shared/types.ts';
+import type { Duration, LatLng } from '../../../shared/types.ts';
 
 const YANDEX_MAPS = 'https://yandex.uz/maps/';
-
-/** Что искать в Яндекс Картах для каждого формата встречи. */
-const FORMAT_SEARCH: Record<Format, string> = {
-  eat: 'кафе и рестораны',
-  coffee: 'кофейни',
-  bar: 'бары',
-  active: 'развлечения',
-  walk: 'парки',
-  home: 'кафе',
-  any: 'кафе и рестораны',
-};
-
-/** Поиск мест под формат встречи рядом с точкой — открывается в Яндекс Картах. */
-export function yandexSearchUrl(format: Format, near: LatLng): string {
-  return `${YANDEX_MAPS}?${new URLSearchParams({ text: FORMAT_SEARCH[format], ll: `${near.lng},${near.lat}`, z: '14' })}`;
-}
 
 function floating(date: string, time: string, plusHours = 0): string {
   const [y, m, d] = date.split('-').map(Number);

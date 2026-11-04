@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { dayLabel, joinNames, plural } from '../../../shared/format.ts';
 import type { MemberStatus, PlanView } from '../../../shared/types.ts';
 import { api, enableReminders, planLink } from '../api.ts';
+import { DeletePlanButton } from '../components/DeletePlanButton.tsx';
 import { IconBell, IconCalendar, IconCheck, IconPin, IconSend, IconUsers } from '../components/icons.tsx';
 import { BottomBar, MainButton, Segmented, Switch, useToast } from '../components/ui.tsx';
 import { endTime, googleCalendarUrl, routeLinks } from '../lib/links.ts';
@@ -157,9 +158,11 @@ export function Confirmed({ plan, setPlan }: { plan: PlanView; setPlan: (p: Plan
             Отправить в чат ещё раз
           </button>
         )}
+        {plan.isOwner && <DeletePlanButton id={plan.id} />}
       </main>
 
-      {place && (
+      {/* Своё место без ссылки — например, «дома у Тимура»: бронировать негде. */}
+      {place && (!place.custom || place.url) && (
         <BottomBar>
           <div className="caption" style={{ textAlign: 'center' }}>
             Скопируем готовый текст брони

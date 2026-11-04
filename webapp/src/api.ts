@@ -3,7 +3,14 @@ import { askWriteAccessOnce, inTelegram, tg } from './telegram.ts';
 
 const BASE = String(import.meta.env.VITE_API_URL ?? '').replace(/\/$/, '');
 
-export class ApiError extends Error {}
+export class ApiError extends Error {
+  status: number;
+
+  constructor(message: string, status = 0) {
+    super(message);
+    this.status = status;
+  }
+}
 
 function authHeader(): string {
   if (inTelegram && tg) return `tma ${tg.initData}`;
@@ -26,7 +33,7 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
     throw new ApiError('Нет связи с сервером');
   }
   const data = (await res.json().catch(() => null)) as { error?: string } | null;
-  if (!res.ok) throw new ApiError(data?.error ?? `Ошибка ${res.status}`);
+  if (!res.ok) throw new ApiError(data?.error ?? `Ошибка ${res.status}`, res.status);
   return data as T;
 }
 
@@ -35,7 +42,8 @@ export const api = {
   writeAccess: (allowed: boolean) => request<{ ok: boolean }>('POST', '/api/me/write-access', { allowed }),
   plans: () => request<PlanSummary[]>('GET', '/api/plans'),
   plan: (id: string) => request<PlanView>('GET', `/api/plans/${id}`),
-  create: (plan: NewPlan) => request<{ id: string }>('POST', '/api/plans', plan),
+  create: (plan: NewPlan) => request<{ id: string; posted: boolean }>('POST', '/api/plans', plan),
+  remove: (id: string) => request<{ ok: boolean }>('DELETE', `/api/plans/${id}`),
   updateMe: (id: string, patch: MePatch) => request<PlanView>('PATCH', `/api/plans/${id}/me`, patch),
   vote: (id: string, placeId: string, liked: boolean) =>
     request<PlanView>('POST', `/api/plans/${id}/votes`, { placeId, liked }),
@@ -61,5 +69,5 @@ export function planLink(id: string): string {
   const bot = import.meta.env.VITE_BOT_USERNAME;
   // Без короткого имени ссылка ведёт на главное Mini App бота.
   const app = import.meta.env.VITE_APP_SHORT_NAME ? `/${import.meta.env.VITE_APP_SHORT_NAME}` : '';
-  return bot ? `https://t.me/${bot}${app}?startapp=p_${id}` : `${location.origin}/?startapp=p_${id}`;
+  return bot ? `https://t.me/${bot}${app}?startapp=p_${id}&mode=compact` : `${location.origin}/?startapp=p_${id}`;
 }

@@ -1,23 +1,26 @@
 import asyncio
 import logging
+from types import SimpleNamespace
 from unittest.mock import create_autospec
 
 from telegram import Bot, MenuButtonWebApp
 from telegram.error import BadRequest
 
-from app.bot import setup_menu_button
+from app.bot import BotNotifier, group_menu, setup_menu_button
 from app.config import Config
+from app.db import open_db
+from app.plans import PlanService
 
 CFG = Config(bot_username="skhodka_bot", webapp_url="https://demo.trycloudflare.com")
 
 
 def test_links_lead_to_main_mini_app_by_default():
-    assert CFG.direct_link("p_1") == "https://t.me/skhodka_bot?startapp=p_1"
+    assert CFG.direct_link("p_1") == "https://t.me/skhodka_bot?startapp=p_1&mode=compact"
 
 
 def test_links_use_short_name_when_set():
     cfg = Config(bot_username="skhodka_bot", app_short_name="app")
-    assert cfg.direct_link("new") == "https://t.me/skhodka_bot/app?startapp=new"
+    assert cfg.direct_link("new") == "https://t.me/skhodka_bot/app?startapp=new&mode=compact"
 
 
 def test_menu_button_opens_current_url():
@@ -35,3 +38,61 @@ def test_bad_url_does_not_stop_the_server(caplog):
     with caplog.at_level(logging.WARNING):
         asyncio.run(setup_menu_button(bot, CFG))
     assert "WEBAPP_URL" in caplog.text
+
+
+def make_notifier(status="member"):
+    service = PlanService(open_db(":memory:"), [], "Asia/Tashkent")
+    service.upsert_user(1, "Аня")
+    plan_id = service.create(1, {
+        "title": "Кофе <b>", "format": "coffee", "budget": "any", "duration": "1-2", "votePlace": True, "middle": False,
+        "days": ["2030-01-05"], "times": ["12:00"], "deadlineHours": None, "placeId": None,
+    })
+    app = SimpleNamespace(bot=create_autospec(Bot, instance=True))
+    app.bot.get_chat_member.return_value = SimpleNamespace(status=status)
+    app.bot.send_message.return_value = SimpleNamespace(message_id=77)
+    notifier = BotNotifier(app, service, CFG)
+    service.notifier = notifier
+    return notifier, service, plan_id, app.bot
+
+
+def test_card_goes_to_group_for_its_member():
+    notifier, service, plan_id, bot = make_notifier()
+    assert asyncio.run(notifier.post_card(plan_id, -100, 1)) is True
+    assert bot.send_message.await_args.args[0] == -100
+    card = service.card(plan_id)
+    assert (card["chatId"], card["messageId"]) == (-100, 77)
+    assert "Кофе &lt;b&gt;" in bot.send_message.await_args.args[1]
+
+
+def test_card_refuses_stranger_and_private_chat():
+    notifier, service, plan_id, bot = make_notifier(status="left")
+    assert asyncio.run(notifier.post_card(plan_id, -100, 1)) is False
+    assert asyncio.run(notifier.post_card(plan_id, 555, 1)) is False
+    bot.send_message.assert_not_awaited()
+    assert service.card(plan_id)["chatId"] is None
+
+
+def test_deleting_marks_card_cancelled():
+    notifier, service, plan_id, bot = make_notifier()
+
+    async def scenario():
+        await notifier.post_card(plan_id, -100, 1)
+        service.delete(plan_id, 1)
+        await asyncio.gather(*notifier._tasks)
+
+    asyncio.run(scenario())
+    kwargs = bot.edit_message_text.await_args.kwargs
+    assert (kwargs["chat_id"], kwargs["message_id"], kwargs["reply_markup"]) == (-100, 77, None)
+    assert "отменена" in bot.edit_message_text.await_args.args[0]
+
+
+def test_group_menu_links_back_to_group():
+    notifier, service, plan_id, bot = make_notifier()
+    service.set_chat_message(plan_id, -100, 5)
+    text, markup = group_menu(service, CFG, -100)
+    assert text == "Сходки этой группы:"
+    urls = [row[0].url for row in markup.inline_keyboard]
+    assert urls == [
+        f"https://t.me/skhodka_bot?startapp=p_{plan_id}&mode=compact",
+        "https://t.me/skhodka_bot?startapp=new_-100&mode=compact",
+    ]

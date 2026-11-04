@@ -61,6 +61,7 @@ class Config:
         """Прямая ссылка на Mini App: работает в группах, в отличие от web_app-кнопок.
 
         Без короткого имени ведёт на главное Mini App бота (включается в @BotFather).
+        mode=compact открывает Mini App снизу, на половину экрана.
         """
         app = f"/{self.app_short_name}" if self.app_short_name else ""
-        return f"https://t.me/{self.bot_username}{app}?startapp={start_param}"
+        return f"https://t.me/{self.bot_username}{app}?startapp={start_param}&mode=compact"

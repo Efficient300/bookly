@@ -24,6 +24,8 @@ class Notifier(Protocol):
     def plan_confirmed(self, plan_id: str) -> None: ...
     def nudge(self, plan_id: str, user_ids: list[int]) -> None: ...
     def remind(self, plan_id: str, kind: str) -> None: ...
+    def plan_deleted(self, card: dict, user_ids: list[int]) -> None: ...
+    async def post_card(self, plan_id: str, chat_id: int, user_id: int) -> bool: ...
 
 
 class NoopNotifier:
@@ -31,6 +33,8 @@ class NoopNotifier:
     def plan_confirmed(self, plan_id: str) -> None: pass
     def nudge(self, plan_id: str, user_ids: list[int]) -> None: pass
     def remind(self, plan_id: str, kind: str) -> None: pass
+    def plan_deleted(self, card: dict, user_ids: list[int]) -> None: pass
+    async def post_card(self, plan_id: str, chat_id: int, user_id: int) -> bool: return False
 
 
 STATUSES = {"go", "maybe", "no"}
@@ -177,6 +181,25 @@ class PlanService:
         self._ensure_member(plan_id, user_id)
         return self._build(row, user_id)
 
+    def delete(self, plan_id: str, user_id: int) -> None:
+        row = self._plan_row(plan_id)
+        if row["owner_id"] != user_id:
+            raise HttpError(403, "Удалить может только организатор")
+        card = self.card(plan_id)
+        ids = self.recipients(plan_id, lambda m: not m["isOwner"] and m["status"] in ("go", "maybe"))
+        self.db.execute("DELETE FROM votes WHERE plan_id = ?", (plan_id,))
+        self.db.execute("DELETE FROM plans WHERE id = ?", (plan_id,))
+        self.notifier.plan_deleted(card, ids)
+
+    def list_for_chat(self, chat_id: int) -> list[dict]:
+        """Актуальные сходки группы, новые сверху."""
+        rows = self.db.execute("SELECT * FROM plans WHERE chat_id = ? ORDER BY created_at DESC", (chat_id,)).fetchall()
+        return [
+            {"id": r["id"], "title": r["title"], "status": self._status_of(r)}
+            for r in rows
+            if self._status_of(r) != "done" and not self._expired(r)
+        ]
+
     def list_for_user(self, user_id: int) -> list[dict]:
         rows = self.db.execute(
             """SELECT p.*, m.status AS my_status FROM plans p
@@ -193,7 +216,11 @@ class PlanService:
                 "title": row["title"],
                 "status": status,
                 "isOwner": row["owner_id"] == user_id,
-                "needsAnswer": status == "collecting" and row["my_status"] is None and row["owner_id"] != user_id,
+                "expired": self._expired(row),
+                "needsAnswer": (
+                    status == "collecting" and row["my_status"] is None
+                    and row["owner_id"] != user_id and not self._expired(row)
+                ),
                 "deadline": row["deadline"],
                 "chosen": {"date": row["chosen_date"], "time": row["chosen_time"]} if row["chosen_date"] else None,
                 "placeName": self._place_name(row),
@@ -287,6 +314,11 @@ class PlanService:
                WHERE id = ?""",
             (date, time, place, plan_id),
         )
+        # Организатор, который сам не отвечал, тоже идёт на свою сходку.
+        self.db.execute(
+            "UPDATE members SET status = 'go' WHERE plan_id = ? AND user_id = ? AND status IS NULL",
+            (plan_id, user_id),
+        )
         self.notifier.plan_confirmed(plan_id)
         return self._build(self._plan_row(plan_id), user_id)
 
@@ -295,9 +327,13 @@ class PlanService:
         if row["owner_id"] != user_id:
             raise HttpError(403, "Напоминать может только организатор")
         ids = [m["user_id"] for m in self._member_rows(plan_id) if m["status"] is None and m["user_id"] != user_id]
-        if ids:
-            self.notifier.nudge(plan_id, ids)
-        return len(ids)
+        # Считаем только тех, до кого сообщение дойдёт: личка с разрешением и группа с карточкой.
+        allowed = self.recipients(plan_id, lambda m: True)
+        reachable = [uid for uid in ids if uid in allowed]
+        sent = len(reachable) + (1 if row["chat_id"] else 0)
+        if sent:
+            self.notifier.nudge(plan_id, reachable)
+        return sent
 
     # ---------- после встречи ----------
 
@@ -357,6 +393,9 @@ class PlanService:
     def set_inline_message(self, plan_id: str, inline_message_id: str) -> None:
         self.db.execute("UPDATE plans SET inline_message_id = ? WHERE id = ?", (inline_message_id, plan_id))
 
+    def set_chat_message(self, plan_id: str, chat_id: int, message_id: int) -> None:
+        self.db.execute("UPDATE plans SET chat_id = ?, message_id = ? WHERE id = ?", (chat_id, message_id, plan_id))
+
     def card(self, plan_id: str) -> dict:
         """Данные для карточки в чате."""
         row = self._plan_row(plan_id)
@@ -370,6 +409,9 @@ class PlanService:
             "votePlace": view["votePlace"],
             "deadline": row["deadline"],
             "inlineMessageId": row["inline_message_id"],
+            "chatId": row["chat_id"],
+            "messageId": row["message_id"],
+            "pending": [m["name"] for m in view["members"] if m["status"] is None and not m["isOwner"]],
             "responded": [m["name"] for m in view["members"] if m["status"] is not None],
             "leading": view["top"][0] if view["top"] else None,
             "leadingPlace": leading_place["name"] if leading_place else None,
@@ -472,6 +514,12 @@ class PlanService:
             return "done"
         return "confirmed"
 
+    def _expired(self, row: sqlite3.Row) -> bool:
+        """Сбор так и не подтвердили, а все предложенные дни уже прошли."""
+        if row["status"] == "confirmed":
+            return False
+        return max(json.loads(row["days"])) < datetime.now(self.tz).date().isoformat()
+
     def _place_name(self, row: sqlite3.Row) -> str | None:
         if not row["place_id"]:
             return None
@@ -514,6 +562,7 @@ class PlanService:
             "votePlace": bool(row["vote_place"]),
             "middle": bool(row["middle"]),
             "placeId": row["place_id"],
+            "inGroup": row["chat_id"] is not None,
             "status": self._status_of(row),
             "deadline": row["deadline"],
             "isOwner": row["owner_id"] == user_id,

@@ -9,6 +9,9 @@ export interface Person extends LatLng {
   me?: boolean;
 }
 
+// Общий пустой список: значение по умолчанию не должно меняться между отрисовками.
+const NONE: never[] = [];
+
 const escape = (s: string) => s.replace(/[&<>"]/g, (c) => `&#${c.charCodeAt(0)};`);
 
 /** Метка из нашей разметки: кружок с номером или буквой, центр — точно в точке. */
@@ -28,8 +31,9 @@ function htmlMark(ymaps: YMaps, at: LatLng, html: string, radius: number, option
 }
 
 export function MapView({
-  places = [],
-  people = [],
+  places = NONE,
+  people = NONE,
+  marks = NONE,
   center = null,
   focus = null,
   initialView = null,
@@ -37,10 +41,13 @@ export function MapView({
   onMoveEnd,
   onPick,
   onPlaceClick,
+  onMarkClick,
   className = 'map',
 }: {
   places?: PlaceView[];
   people?: Person[];
+  /** Результаты поиска: при каждом новом списке карта подстраивается под них. */
+  marks?: (LatLng & { label: string })[];
   center?: LatLng | null;
   focus?: LatLng | null;
   initialView?: LatLng | null;
@@ -50,14 +57,16 @@ export function MapView({
   /** Если задан, нажатие на карту отмечает точку. */
   onPick?: (point: LatLng) => void;
   onPlaceClick?: (place: PlaceView) => void;
+  onMarkClick?: (index: number) => void;
   className?: string;
 }) {
   const el = useRef<HTMLDivElement>(null);
   const [ready, setReady] = useState<{ ymaps: YMaps; map: YMap; layer: YCollection } | null>(null);
   const [failed, setFailed] = useState(false);
   const fitted = useRef(false);
-  const handlers = useRef({ onMoveEnd, onPick, onPlaceClick });
-  handlers.current = { onMoveEnd, onPick, onPlaceClick };
+  const fittedMarks = useRef<unknown>(null);
+  const handlers = useRef({ onMoveEnd, onPick, onPlaceClick, onMarkClick });
+  handlers.current = { onMoveEnd, onPick, onPlaceClick, onMarkClick };
 
   useEffect(() => {
     let alive = true;
@@ -95,8 +104,8 @@ export function MapView({
     if (center) {
       layer.add(
         new ymaps.Circle([toCoords(center), 900], {}, {
-          fillColor: '#2F4FF014',
-          strokeColor: '#2F4FF0',
+          fillColor: '#007AFF14',
+          strokeColor: '#007AFF',
           strokeWidth: 2,
           strokeStyle: 'dash',
           interactivityModel: 'default#transparent',
@@ -117,17 +126,25 @@ export function MapView({
       layer.add(htmlMark(ymaps, person, html, 13, { title: person.name, transparent: true }));
     }
 
+    marks.forEach((m, i) => {
+      layer.add(htmlMark(ymaps, m, `<div class="pin">${escape(m.label)}</div>`, 15, { onClick: () => handlers.current.onMarkClick?.(i) }));
+    });
+
     // Подгоняем масштаб один раз — по местам, людям и центру, без отмеченной точки.
+    // Новые результаты поиска показываем всегда.
+    const fitMarks = marks.length > 0 && fittedMarks.current !== marks;
+    if (fitMarks) fittedMarks.current = marks;
     const bounds = layer.getBounds();
-    if (!fitted.current && bounds) {
+    if ((!fitted.current || fitMarks) && bounds) {
       fitted.current = true;
-      void map.setBounds(bounds, { checkZoomRange: true, zoomMargin: 48 }).then(() => {
+      // Результаты поиска не должны оказаться под панелью со списком.
+      void map.setBounds(bounds, { checkZoomRange: true, zoomMargin: fitMarks ? [120, 40, 320, 40] : 48 }).then(() => {
         if (map.getZoom() > 15) void map.setZoom(15);
       });
     }
 
     if (pick) layer.add(htmlMark(ymaps, pick, '<div class="pin pick"></div>', 14, { transparent: true }));
-  }, [ready, places, people, center, pick]);
+  }, [ready, places, people, marks, center, pick]);
 
   useEffect(() => {
     if (!ready || !focus) return;
