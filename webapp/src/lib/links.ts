@@ -66,6 +66,19 @@ export function weekend(offset = 0, from = new Date()): string[] {
     .filter((x) => x >= today);
 }
 
+/** Будни: оставшиеся на этой неделе, а с субботы — всю следующую неделю. */
+export function weekdays(from = new Date()): string[] {
+  const d = new Date(from);
+  const day = d.getDay();
+  if (day === 6 || day === 0) d.setDate(d.getDate() + (day === 6 ? 2 : 1));
+  const result: string[] = [];
+  while (d.getDay() >= 1 && d.getDay() <= 5) {
+    result.push(localDay(d));
+    d.setDate(d.getDate() + 1);
+  }
+  return result;
+}
+
 export function daysUntil(day: string, from = new Date()): number {
   const [y, m, d] = day.split('-').map(Number);
   const target = new Date(y, m - 1, d);

@@ -1,50 +1,49 @@
 import { useState } from 'react';
-import { dayLabel, joinNames, plural } from '../../../shared/format.ts';
+import { dayLabel, joinNames, plural, weekdayShort } from '../../../shared/format.ts';
 import type { PlanView } from '../../../shared/types.ts';
 import { api, enableReminders, planLink } from '../api.ts';
 import { DeletePlanButton } from '../components/DeletePlanButton.tsx';
-import { IconBell, IconCalendar, IconCheck, IconPin, IconSend } from '../components/icons.tsx';
-import { PlanCover } from '../components/PlanCover.tsx';
-import { ActionSheet, Avatar, StatusPicker, Switch, useToast } from '../components/ui.tsx';
+import { IconBell, IconCalendar, IconChevron, IconPin, IconRoute, IconSend, IconUsers } from '../components/icons.tsx';
+import { ActionBar, ActionSheet, Switch, useToast } from '../components/ui.tsx';
 import { endTime, googleCalendarUrl, routeLinks } from '../lib/links.ts';
 import { downloadFile, haptic, openLink, shareToChat } from '../telegram.ts';
 
 type Sheet = { title: string; options: { label: string; run: () => void }[] };
 
-/** Сходка подтверждена: как билет — когда, где и быстрые действия. */
+const monthDay = new Intl.DateTimeFormat('ru-RU', { day: 'numeric', month: 'long', timeZone: 'UTC' });
+
+/** Итог: решение крупно на лайме, дальше только полезные действия. */
 export function Confirmed({ plan, setPlan }: { plan: PlanView; setPlan: (p: PlanView) => void }) {
   const toast = useToast();
   const [sheet, setSheet] = useState<Sheet | null>(null);
+  const [busy, setBusy] = useState(false);
   const chosen = plan.chosen!;
   const place = plan.places.find((p) => p.id === chosen.placeId) ?? null;
   const going = plan.members.filter((m) => m.status === 'go');
-  const hasPoint = place !== null && place.lat !== null && place.lng !== null;
+  const cannot = plan.members.filter((m) => m.status === 'no');
+  const point = place && place.lat !== null && place.lng !== null ? { lat: place.lat, lng: place.lng } : null;
+  const fits = plan.heat[`${chosen.date}T${chosen.time}`] ?? 0;
+  const [y, m, d] = chosen.date.split('-').map(Number);
 
-  async function patch(update: Parameters<typeof api.updateMe>[1]) {
+  async function setStatus(status: 'go' | 'no') {
+    setBusy(true);
     try {
-      setPlan(await api.updateMe(plan.id, update));
-      haptic.select();
+      setPlan(await api.updateMe(plan.id, { status }));
+      haptic.success();
     } catch (e) {
       toast((e as Error).message);
+    } finally {
+      setBusy(false);
     }
   }
 
   async function setRemind(on: boolean) {
-    await patch({ remind: on });
-    if (on) await enableReminders(true);
-  }
-
-  async function book() {
-    const count = going.length || plan.members.length;
-    const text = `Здравствуйте! Хотим забронировать столик на ${count} ${plural(count, ['человека', 'человек', 'человек'])} — ${dayLabel(chosen.date)}, в ${chosen.time}.`;
     try {
-      await navigator.clipboard.writeText(text);
-      toast('Текст брони скопирован');
-    } catch {
-      toast(text);
+      setPlan(await api.updateMe(plan.id, { remind: on }));
+      if (on) await enableReminders(true);
+    } catch (e) {
+      toast((e as Error).message);
     }
-    if (place?.url) openLink(place.url);
-    else if (place?.phone) openLink(`tel:${place.phone}`);
   }
 
   function share() {
@@ -54,109 +53,111 @@ export function Confirmed({ plan, setPlan }: { plan: PlanView; setPlan: (p: Plan
   }
 
   function showRoutes() {
-    if (!hasPoint) return;
-    setSheet({
-      title: 'Построить маршрут',
-      options: routeLinks({ lat: place.lat as number, lng: place.lng as number }).map((r) => ({ label: r.label, run: () => openLink(r.url) })),
-    });
+    if (!point) return;
+    const [yandex, ...others] = routeLinks(point);
+    setSheet({ title: 'Построить маршрут', options: [yandex, ...others].map((r) => ({ label: r.label, run: () => openLink(r.url) })) });
   }
 
   function showCalendars() {
     setSheet({
       title: 'Добавить в календарь',
       options: [
-        {
-          label: 'Google Календарь',
-          run: () => openLink(googleCalendarUrl({ title: plan.title, ...chosen, duration: plan.duration, location: place?.name ?? null })),
-        },
+        { label: 'Google Календарь', run: () => openLink(googleCalendarUrl({ title: plan.title, ...chosen, duration: plan.duration, location: place?.name ?? null })) },
         { label: 'Apple, Outlook и другие', run: () => downloadFile(api.icsUrl(plan.id), 'skhodka.ics') },
       ],
     });
   }
 
+  const goingNow = plan.me.status === 'go';
+
   return (
     <div className="screen">
       <main className="content">
-        <PlanCover format={plan.format}>
-          <span className="cover-pill row" style={{ gap: 4 }}>
-            <IconCheck size={14} strokeWidth={3} />
-            Решено
-          </span>
-          <h1 className="cover-title">{plan.title}</h1>
-          <span className="cover-when">{dayLabel(chosen.date)}</span>
-          <span className="cover-sub">
-            {chosen.time} – {endTime(chosen.time, plan.duration)}
-            {place ? ` · ${place.name}` : ' · место уточним'}
-          </span>
-        </PlanCover>
-
-        <div className="actions">
-          <button type="button" className="action" disabled={!hasPoint} onClick={showRoutes}>
-            <span className="action-icon">
-              <IconPin size={22} />
+        <span className="note">{plan.title}</span>
+        <section className="result">
+          <span className="tag">Решено</span>
+          <div className="stack" style={{ gap: 6 }}>
+            <span className="display">
+              {weekdayShort(chosen.date)}, {chosen.time}
             </span>
-            Маршрут
-          </button>
-          <button type="button" className="action" onClick={showCalendars}>
-            <span className="action-icon">
-              <IconCalendar size={22} />
+            <span style={{ fontSize: 15 }}>
+              {monthDay.format(new Date(Date.UTC(y, m - 1, d)))} · до {endTime(chosen.time, plan.duration)}
+              {plan.responded ? ` · подходит ${fits} из ${plan.responded}` : ''}
             </span>
-            Календарь
-          </button>
-          <button type="button" className="action" onClick={share}>
-            <span className="action-icon">
-              <IconSend size={22} />
-            </span>
-            В чат
-          </button>
-        </div>
-
-        <section className="section">
-          <h2 className="h2">Вы идёте?</h2>
-          <StatusPicker value={plan.me.status} onChange={(status) => patch({ status })} />
-        </section>
-
-        <section className="section">
-          <h2 className="h2">
-            {going.length} {plural(going.length, ['идёт', 'идут', 'идут'])}
-          </h2>
-          <div className="card row" style={{ flexDirection: 'row', gap: 12 }}>
-            {going.length > 0 && (
-              <span className="avatars">
-                {going.slice(0, 5).map((m) => (
-                  <Avatar key={m.id} name={m.name} seed={m.id} photo={m.photo} size={32} />
-                ))}
+          </div>
+          <div className="result-rows">
+            <div>
+              <IconPin size={20} />
+              <span className="stack" style={{ gap: 2 }}>
+                <span>{place?.name ?? 'Место уточним'}</span>
+                {place && (place.address || place.kind) && <span className="sub">{place.address ?? place.kind}</span>}
               </span>
-            )}
-            <span className="caption grow">{joinNames(going.map((m) => m.name)) || 'Пока никто не отметился'}</span>
+            </div>
+            <div>
+              <IconUsers size={20} />
+              <span>{going.length ? joinNames(going.map((g) => g.name)) : 'Пока никто не отметился'}</span>
+            </div>
           </div>
         </section>
 
-        <div className="list">
-          <div className="list-row">
-            <span className="icon-box orange">
+        <div className="group">
+          {point && (
+            <button type="button" className="row" onClick={showRoutes}>
+              <span className="row-icon">
+                <IconRoute size={20} />
+              </span>
+              <span className="lbl">
+                <span>Открыть маршрут</span>
+                <span className="sub">Яндекс Карты</span>
+              </span>
+              <IconChevron size={16} className="chev" />
+            </button>
+          )}
+          <button type="button" className="row" onClick={showCalendars}>
+            <span className="row-icon">
+              <IconCalendar size={20} />
+            </span>
+            <span className="lbl">
+              <span>Добавить в календарь</span>
+              <span className="sub">{dayLabel(chosen.date)}</span>
+            </span>
+            <IconChevron size={16} className="chev" />
+          </button>
+          <button type="button" className="row" onClick={share}>
+            <span className="row-icon">
+              <IconSend size={20} />
+            </span>
+            <span className="lbl">
+              <span>Отправить в чат</span>
+            </span>
+          </button>
+          <div className="row">
+            <span className="row-icon">
               <IconBell size={20} />
             </span>
-            <span id="remind-label" className="grow list-title">
-              Напомнить за день и за 2 часа
+            <span id="remind-label" className="lbl">
+              <span>Напомнить за день и за 2 часа</span>
             </span>
             <Switch checked={plan.me.remind} onChange={setRemind} labelledBy="remind-label" />
           </div>
-          {/* Своё место без ссылки — например, «дома у Тимура»: бронировать негде. */}
-          {place && (!place.custom || place.url) && (
-            <button type="button" className="list-row" onClick={book}>
-              <span className="grow row-text">
-                <span className="list-title accent-text">Забронировать столик</span>
-                <span className="caption">Скопируем готовый текст брони</span>
-              </span>
-            </button>
-          )}
         </div>
+
+        <p className="note" style={{ margin: 0 }}>
+          {cannot.length > 0 && `${joinNames(cannot.map((c) => c.name))} ${cannot.length === 1 ? 'не сможет' : 'не смогут'} в это время. `}
+          Бот напомнит всем за 2 часа.
+          {going.length > 0 && ` Идут ${going.length} ${plural(going.length, ['человек', 'человека', 'человек'])}.`}
+        </p>
 
         {plan.isOwner && <DeletePlanButton id={plan.id} />}
       </main>
 
       {sheet && <ActionSheet title={sheet.title} options={sheet.options} onClose={() => setSheet(null)} />}
+
+      <ActionBar
+        main={goingNow ? undefined : { label: 'Я иду', onClick: () => void setStatus('go'), busy }}
+        secondary={goingNow ? { label: 'Не смогу', onClick: () => void setStatus('no'), disabled: busy } : undefined}
+        note={goingNow ? 'Вы идёте' : null}
+      />
     </div>
   );
 }

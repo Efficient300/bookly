@@ -1,55 +1,49 @@
-import { createContext, useCallback, useContext, useRef, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { dayNumber, initials, weekdayShort } from '../../../shared/format.ts';
-import type { MemberStatus } from '../../../shared/types.ts';
-import { haptic } from '../telegram.ts';
-import { IconCheck, IconQuestion, IconUpDown, IconX } from './icons.tsx';
+import type { PlanStatus } from '../../../shared/types.ts';
+import { haptic, nativeBar, pushBar } from '../telegram.ts';
+import type { BarAction } from '../telegram.ts';
+import { IconChevron } from './icons.tsx';
 
-const AVATAR_TONES = 6;
-
-function tone(seed: string | number): string {
-  const n = typeof seed === 'number' ? seed : [...seed].reduce((s, c) => s + c.charCodeAt(0), 0);
-  return `var(--av-${(Math.abs(n) % AVATAR_TONES) + 1})`;
-}
-
-export function Avatar({
-  name,
-  seed,
-  photo = null,
-  size = 28,
-}: {
-  name: string;
-  seed?: string | number;
-  photo?: string | null;
-  size?: number;
-}) {
+export function Avatar({ name, photo = null, size = 32 }: { name: string; photo?: string | null; size?: number }) {
   const [broken, setBroken] = useState(false);
   return (
-    <span
-      className="avatar"
-      aria-hidden="true"
-      style={{ width: size, height: size, fontSize: size * 0.43, background: tone(seed ?? name) }}
-    >
+    <span className="av" aria-hidden="true" style={{ width: size, height: size, fontSize: Math.round(size * 0.36) }}>
       {initials(name)}
       {photo && !broken && <img src={photo} alt="" referrerPolicy="no-referrer" onError={() => setBroken(true)} />}
     </span>
   );
 }
 
+/** Аватары стопкой; «ждём» — пунктирные кружки для тех, кто ещё не ответил. */
 export function AvatarStack({
   people,
-  max = 5,
-  size = 28,
+  waiting = 0,
+  max = 4,
+  size = 32,
 }: {
   people: { id: number; name: string; photo?: string | null }[];
+  waiting?: number;
   max?: number;
   size?: number;
 }) {
+  const extra = people.length - max;
   return (
-    <span className="avatars" aria-hidden="true">
+    <span className="avs" aria-hidden="true">
       {people.slice(0, max).map((p) => (
-        <Avatar key={p.id} name={p.name} seed={p.id} photo={p.photo} size={size} />
+        <Avatar key={p.id} name={p.name} photo={p.photo} size={size} />
+      ))}
+      {extra > 0 && (
+        <span className="av" style={{ width: size, height: size }}>
+          +{extra}
+        </span>
+      )}
+      {Array.from({ length: Math.min(waiting, 3) }, (_, i) => (
+        <span key={`w${i}`} className="av wait" style={{ width: size, height: size }}>
+          ?
+        </span>
       ))}
     </span>
   );
@@ -67,7 +61,7 @@ export function Segmented<T extends string>({
   label: string;
 }) {
   return (
-    <div className="segmented" role="group" aria-label={label}>
+    <div className="seg" role="group" aria-label={label}>
       {options.map((o) => (
         <button
           key={o.value}
@@ -85,124 +79,78 @@ export function Segmented<T extends string>({
   );
 }
 
-/** Строка со списком вариантов: на телефоне открывается системное меню выбора. */
-export function SelectRow<T extends string>({
+/** Строка формы: название, значение справа и один шеврон, который поворачивается при раскрытии. */
+export function ExpandRow({
   label,
-  options,
   value,
-  onChange,
-  suffix = '',
+  warn = false,
+  open,
+  onToggle,
+  children,
 }: {
   label: string;
-  options: { value: T; label: string }[];
-  value: T;
-  onChange: (value: T) => void;
-  suffix?: string;
+  value: string;
+  warn?: boolean;
+  open: boolean;
+  onToggle: () => void;
+  children: ReactNode;
 }) {
-  const current = options.find((o) => o.value === value)?.label ?? '';
   return (
-    <label className="list-row select-row">
-      <span className="grow list-title">{label}</span>
-      <span className="row-value">
-        {current}
-        {suffix}
-      </span>
-      <IconUpDown size={16} className="row-chevron" />
-      <select
-        value={value}
-        aria-label={label}
-        onChange={(e) => {
-          haptic.select();
-          onChange(e.target.value as T);
-        }}
-      >
-        {options.map((o) => (
-          <option key={o.value} value={o.value}>
-            {o.label}
-          </option>
-        ))}
-      </select>
-    </label>
+    <>
+      <button type="button" className="row" aria-expanded={open} onClick={onToggle}>
+        <span className="lbl">
+          <span>{label}</span>
+        </span>
+        <span className={warn ? 'val warn' : 'val'}>{value}</span>
+        <IconChevron size={16} className="chev" />
+      </button>
+      {open && <div className="expand">{children}</div>}
+    </>
   );
 }
 
-const STATUSES: { value: MemberStatus; label: string; Icon: typeof IconCheck }[] = [
-  { value: 'go', label: 'Иду', Icon: IconCheck },
-  { value: 'maybe', label: 'Может быть', Icon: IconQuestion },
-  { value: 'no', label: 'Не могу', Icon: IconX },
-];
-
-/** Три большие кнопки вместо мелкого переключателя: нажать можно не глядя. */
-export function StatusPicker({ value, onChange }: { value: MemberStatus | null; onChange: (value: MemberStatus) => void }) {
+/** Чипы с одним выбранным значением. */
+export function ChoiceChips<T extends string>({
+  options,
+  value,
+  onChange,
+  label,
+}: {
+  options: { value: T; label: string }[];
+  value: T;
+  onChange: (value: T) => void;
+  label: string;
+}) {
   return (
-    <div className="status-picker" role="group" aria-label="Ваш статус">
-      {STATUSES.map(({ value: v, label, Icon }) => (
+    <div className="chips" role="group" aria-label={label}>
+      {options.map((o) => (
         <button
-          key={v}
+          key={o.value}
           type="button"
-          className={`status-item ${v}`}
-          aria-pressed={value === v}
+          className="chip"
+          aria-pressed={value === o.value}
           onClick={() => {
             haptic.select();
-            onChange(v);
+            onChange(o.value);
           }}
         >
-          <span className="status-icon">
-            <Icon size={22} strokeWidth={2.5} />
-          </span>
-          {label}
+          {o.label}
         </button>
       ))}
     </div>
   );
 }
 
-/** Плитка даты, как значок календаря: день недели и число. */
-export function DateTile({ day }: { day: string }) {
-  return (
-    <span className="date-tile" aria-hidden="true">
-      <small>{weekdayShort(day)}</small>
-      <b>{dayNumber(day)}</b>
-    </span>
-  );
-}
+const TAGS: Record<PlanStatus | 'expired', { label: string; className: string }> = {
+  confirmed: { label: 'Решено', className: 'tag on' },
+  collecting: { label: 'Ждём ответы', className: 'tag' },
+  done: { label: 'Прошла', className: 'tag out' },
+  expired: { label: 'Не состоялась', className: 'tag out' },
+};
 
-/** Меню снизу с вариантами действия. */
-export function ActionSheet({
-  title,
-  options,
-  onClose,
-}: {
-  title: string;
-  options: { label: string; run: () => void }[];
-  onClose: () => void;
-}) {
-  return createPortal(
-    <div className="sheet-backdrop" role="dialog" aria-modal="true" aria-label={title} onClick={onClose}>
-      <div className="action-sheet" onClick={(e) => e.stopPropagation()}>
-        <div className="list">
-          <div className="action-title">{title}</div>
-          {options.map((o) => (
-            <button
-              key={o.label}
-              type="button"
-              className="action-option"
-              onClick={() => {
-                onClose();
-                o.run();
-              }}
-            >
-              {o.label}
-            </button>
-          ))}
-        </div>
-        <button type="button" className="action-option cancel" onClick={onClose}>
-          Отмена
-        </button>
-      </div>
-    </div>,
-    document.body,
-  );
+export function StatusTag({ status }: { status: PlanStatus | 'expired' }) {
+  const tag = TAGS[status];
+  return <span className={tag.className}>{tag.label}</span>;
 }
 
 export function Switch({ checked, onChange, labelledBy }: { checked: boolean; onChange: (v: boolean) => void; labelledBy: string }) {
@@ -223,39 +171,67 @@ export function Switch({ checked, onChange, labelledBy }: { checked: boolean; on
   );
 }
 
-export function ToggleRow({ id, title, hint, checked, onChange }: { id: string; title: string; hint?: string; checked: boolean; onChange: (v: boolean) => void }) {
+/** Плитка даты: день недели и число. */
+export function DateTile({ day }: { day: string }) {
   return (
-    <div className="list-row">
-      <div className="grow" style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-        <div id={id} style={{ fontSize: 15, fontWeight: 500 }}>
-          {title}
-        </div>
-        {hint && <div className="caption">{hint}</div>}
-      </div>
-      <Switch checked={checked} onChange={onChange} labelledBy={id} />
-    </div>
+    <span className="date-tile" aria-hidden="true">
+      <small>{weekdayShort(day)}</small>
+      <b>{dayNumber(day)}</b>
+    </span>
   );
 }
 
-export function BottomBar({ children }: { children: ReactNode }) {
-  return <div className="bottom-bar">{children}</div>;
-}
+/**
+ * Главное и второе действие экрана. В Telegram это нативные MainButton и SecondaryButton,
+ * вне его — своя панель внизу. Пояснение показываем текстом над кнопками.
+ */
+export function ActionBar({ main, secondary, note }: { main?: BarAction; secondary?: BarAction; note?: string | null }) {
+  const bar = useRef<ReturnType<typeof pushBar> | null>(null);
+  const latest = useRef({ main, secondary });
+  latest.current = { main, secondary };
 
-export function MainButton({
-  children,
-  onClick,
-  disabled,
-  busy,
-}: {
-  children: ReactNode;
-  onClick: () => void;
-  disabled?: boolean;
-  busy?: boolean;
-}) {
+  useEffect(() => {
+    if (!nativeBar) return;
+    // Обработчики берём из последнего рендера, чтобы не перерегистрировать их на каждый ввод.
+    const proxy = (pick: 'main' | 'secondary') => () => latest.current[pick]?.onClick();
+    const state = () => ({
+      main: latest.current.main && { ...latest.current.main, onClick: proxy('main') },
+      secondary: latest.current.secondary && { ...latest.current.secondary, onClick: proxy('secondary') },
+    });
+    bar.current = pushBar(state());
+    return () => {
+      bar.current?.remove();
+      bar.current = null;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!nativeBar || !bar.current) return;
+    const proxy = (pick: 'main' | 'secondary') => () => latest.current[pick]?.onClick();
+    bar.current.update({
+      main: main && { ...main, onClick: proxy('main') },
+      secondary: secondary && { ...secondary, onClick: proxy('secondary') },
+    });
+  }, [main?.label, main?.disabled, main?.busy, secondary?.label, secondary?.disabled, !!main, !!secondary]);
+
+  if (nativeBar) {
+    return note ? <div className="bar-note">{note}</div> : null;
+  }
+  if (!main && !secondary && !note) return null;
   return (
-    <button type="button" className="btn-main" onClick={onClick} disabled={disabled || busy} aria-busy={busy}>
-      {busy ? 'Секунду…' : children}
-    </button>
+    <div className="bar">
+      {note && <div className="bar-note" style={{ padding: 0 }}>{note}</div>}
+      {main && (
+        <button type="button" className="btn" onClick={main.onClick} disabled={main.disabled || main.busy} aria-busy={main.busy}>
+          {main.busy ? 'Секунду…' : main.label}
+        </button>
+      )}
+      {secondary && (
+        <button type="button" className="btn secondary" onClick={secondary.onClick} disabled={secondary.disabled}>
+          {secondary.label}
+        </button>
+      )}
+    </div>
   );
 }
 
@@ -270,11 +246,47 @@ export function ErrorBox({ message, onRetry }: { message: string; onRetry?: () =
         {message}
       </div>
       {onRetry && (
-        <button type="button" className="btn-text" onClick={onRetry}>
+        <button type="button" className="btn-link" onClick={onRetry}>
           Повторить
         </button>
       )}
     </div>
+  );
+}
+
+/** Меню снизу с вариантами действия. */
+export function ActionSheet({
+  title,
+  options,
+  onClose,
+}: {
+  title: string;
+  options: { label: string; run: () => void }[];
+  onClose: () => void;
+}) {
+  return createPortal(
+    <div className="sheet-backdrop" role="dialog" aria-modal="true" aria-label={title} onClick={onClose}>
+      <div className="action-sheet" onClick={(e) => e.stopPropagation()}>
+        <div className="action-title">{title}</div>
+        {options.map((o) => (
+          <button
+            key={o.label}
+            type="button"
+            className="btn secondary"
+            onClick={() => {
+              onClose();
+              o.run();
+            }}
+          >
+            {o.label}
+          </button>
+        ))}
+        <button type="button" className="btn-link" style={{ alignSelf: 'center' }} onClick={onClose}>
+          Отмена
+        </button>
+      </div>
+    </div>,
+    document.body,
   );
 }
 

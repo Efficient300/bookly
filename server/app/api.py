@@ -11,6 +11,7 @@ from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 
 from .config import Config
+from .geo import search_places
 from .ics import build_ics
 from .init_data import InitDataError, validate_init_data
 from .plans import HttpError, PlanService
@@ -147,6 +148,24 @@ def create_app(service: PlanService, cfg: Config, lifespan=None) -> Starlette:
             raise HttpError(400, "Неверный участник")
         return JSONResponse(service.mark_paid(pid(request), uid, target, bool(data.get("paid"))))
 
+    async def places_search(request: Request):
+        user_id(request)
+        if not cfg.yandex_search_key:
+            return JSONResponse({"available": False, "items": []})
+        text = request.query_params.get("text", "").strip()[:100]
+        try:
+            center = {"lat": float(request.query_params["lat"]), "lng": float(request.query_params["lng"])}
+        except (KeyError, ValueError):
+            raise HttpError(400, "Нужны координаты центра карты")
+        if not text:
+            return JSONResponse({"available": True, "items": []})
+        try:
+            items = await search_places(cfg.yandex_search_key, text, center)
+        except Exception as exc:
+            log.warning("Поиск мест не ответил: %s", exc)
+            raise HttpError(502, "Поиск мест сейчас не отвечает")
+        return JSONResponse({"available": True, "items": items})
+
     async def review(request: Request):
         uid = user_id(request)
         return JSONResponse(service.review(pid(request), uid, await body(request)))
@@ -170,6 +189,7 @@ def create_app(service: PlanService, cfg: Config, lifespan=None) -> Starlette:
     routes = [
         Route("/api/plans/{id}/event.ics", event_ics, methods=["GET"]),
         Route("/api/me", me, methods=["GET"]),
+        Route("/api/places/search", places_search, methods=["GET"]),
         Route("/api/me/write-access", write_access, methods=["POST"]),
         Route("/api/plans", plans, methods=["GET", "POST"]),
         Route("/api/plans/{id}", plan, methods=["GET", "DELETE"]),

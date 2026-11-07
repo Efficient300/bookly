@@ -270,3 +270,20 @@ def test_group_people_get_news_only_with_permission(service: PlanService):
     service.set_allows_pm(1, True)
     service.set_allows_pm(3, True)
     assert service.chat_people(-100, exclude=1) == [3]
+
+
+def test_deadline_is_reported_once(service: PlanService):
+    plan_id = service.create(1, {**BASE_PLAN, "deadlineHours": 1})
+    later = datetime.now(service.tz) + timedelta(hours=2)
+    assert service.due_deadlines(datetime.now(service.tz)) == []
+    assert service.due_deadlines(later) == [plan_id]
+    assert service.due_deadlines(later) == []
+
+
+def test_votes_show_who_voted(service: PlanService):
+    plan_id = service.create(1, BASE_PLAN)
+    service.vote(plan_id, 2, "a", True)
+    service.vote(plan_id, 3, "a", True)
+    place = next(p for p in service.view(plan_id, 1)["places"] if p["id"] == "a")
+    assert [v["name"] for v in place["voters"]] == ["Тимур", "Лена"]
+    assert service.list_for_user(1)[0]["total"] == 3

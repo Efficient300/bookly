@@ -14,6 +14,7 @@ from telegram import (
     InlineQueryResultArticle,
     InlineQueryResultsButton,
     InputTextMessageContent,
+    CallbackQuery,
     MenuButtonWebApp,
     ReplyParameters,
     Update,
@@ -23,6 +24,7 @@ from telegram.constants import ParseMode
 from telegram.error import BadRequest, Forbidden, TelegramError
 from telegram.ext import (
     Application,
+    CallbackQueryHandler,
     ChatMemberHandler,
     ChosenInlineResultHandler,
     CommandHandler,
@@ -36,6 +38,9 @@ from .plans import HttpError, PlanService
 
 log = logging.getLogger(__name__)
 PLAN_QUERY = re.compile(r"^p_([\w-]+)$")
+CONFIRM_DATA = re.compile(r"^c:([\w-]+):(\d{4}-\d{2}-\d{2}T\d{2}:\d{2})$")
+# Ответы друзей организатору — не чаще одного сообщения за это время.
+ANSWER_WINDOW = 30 * 60
 STATUS_WORDS = {"go": "идёт", "maybe": "может быть", "no": "не может"}
 
 
@@ -70,6 +75,10 @@ def card_text(card: dict, tz: str) -> str:
     return "\n".join(lines)
 
 
+def route_url(point: dict) -> str:
+    return f"https://yandex.uz/maps/?rtext=~{point['lat']},{point['lng']}&rtt=auto"
+
+
 def card_keyboard(card: dict, cfg: Config) -> InlineKeyboardMarkup:
     # В группах web_app-кнопки не работают — нужна обычная ссылка на Mini App.
     text = "Ответить" if card["status"] == "collecting" else "Открыть"
@@ -99,6 +108,9 @@ class BotNotifier:
         self.service = service
         self.cfg = cfg
         self._timers: dict[str, asyncio.TimerHandle] = {}
+        # Окно, в котором ответы копятся, и сами ответы.
+        self._answer_windows: dict[str, asyncio.TimerHandle] = {}
+        self._answer_queue: dict[str, list[str]] = {}
         self._tasks: set[asyncio.Task] = set()
 
     def _spawn(self, coro) -> None:
@@ -166,8 +178,11 @@ class BotNotifier:
         self._spawn(self._dm(people, f"Новая сходка в группе: <b>{escape(card['title'])}</b>. Когда вам удобно?", plan_id))
         return True
 
-    async def _dm(self, user_ids: list[int], text: str, plan_id: str | None) -> None:
-        markup = open_button(self.cfg, f"p_{plan_id}", "Открыть") if plan_id else None
+    async def _dm(
+        self, user_ids: list[int], text: str, plan_id: str | None, markup: InlineKeyboardMarkup | None = None
+    ) -> None:
+        if markup is None and plan_id:
+            markup = open_button(self.cfg, f"p_{plan_id}", "Открыть")
         for uid in user_ids:
             try:
                 await self.app.bot.send_message(uid, text, parse_mode=ParseMode.HTML, reply_markup=markup)
@@ -184,10 +199,56 @@ class BotNotifier:
         self._spawn(self._dm(ids, text, plan_id))
 
     def member_answered(self, plan_id: str, name: str, status: str) -> None:
-        card = self.service.card(plan_id)
+        who = name if status != "no" else f"{name} (не сможет)"
+        if plan_id in self._answer_windows:
+            self._answer_queue.setdefault(plan_id, []).append(who)
+            return
+        self._send_answers(plan_id, [who])
+
+    def _send_answers(self, plan_id: str, names: list[str]) -> None:
+        try:
+            card = self.service.card(plan_id)
+        except HttpError:
+            return
         ids = self.service.recipients(plan_id, lambda m: m["isOwner"])
-        text = f"<b>{escape(card['title'])}</b>\n{escape(name)} — {STATUS_WORDS[status]}"
+        head = "Новый ответ" if len(names) == 1 else "Новые ответы"
+        done = len(card["responded"])
+        text = f"{head} на «{escape(card['title'])}»: {escape(join_names(names))}. Ответили {done} из {card['total']}."
+        if done == card["total"]:
+            text += " Все ответили — можно выбирать время."
         self._spawn(self._dm(ids, text, plan_id))
+        loop = asyncio.get_running_loop()
+        self._answer_windows[plan_id] = loop.call_later(ANSWER_WINDOW, lambda: self._close_window(plan_id))
+
+    def _close_window(self, plan_id: str) -> None:
+        self._answer_windows.pop(plan_id, None)
+        names = self._answer_queue.pop(plan_id, [])
+        if names:
+            self._send_answers(plan_id, names)
+
+    def deadline_passed(self, plan_id: str) -> None:
+        try:
+            card = self.service.card(plan_id)
+        except HttpError:
+            return
+        ids = self.service.recipients(plan_id, lambda m: m["isOwner"])
+        title = escape(card["title"])
+        best = card["leading"]
+        if not best:
+            text = f"Время ответов по «{title}» вышло, но никто не отметил время."
+            self._spawn(self._dm(ids, text, plan_id))
+            return
+        place = card["placeName"] or card["leadingPlace"]
+        text = (
+            f"Время ответов по «{title}» вышло. Лучший вариант: <b>{slot_label(best['date'], best['time'])}</b>, "
+            f"подходит {best['good'] + best['maybe']} из {len(card['responded'])}."
+            + (f" Место: {escape(place)}." if place else "")
+        )
+        markup = InlineKeyboardMarkup([
+            [InlineKeyboardButton("Подтвердить и сообщить всем", callback_data=f"c:{plan_id}:{best['key']}")],
+            [InlineKeyboardButton("Выбрать другой вариант", web_app=WebAppInfo(f"{self.cfg.webapp_url}?startapp=p_{plan_id}"))],
+        ])
+        self._spawn(self._dm(ids, text, plan_id, markup))
 
     def plan_changed(self, plan_id: str) -> None:
         # Склеиваем частые ответы в одно редактирование, чтобы не упереться в лимиты Telegram.
@@ -222,7 +283,14 @@ class BotNotifier:
         when = "Завтра" if kind == "day" else "Скоро"
         where = f" — {escape(card['placeName'])}" if card["placeName"] else ""
         slot = slot_label(card["chosen"]["date"], card["chosen"]["time"])
-        self._spawn(self._dm(ids, f"{when}: <b>{escape(card['title'])}</b>, {slot}{where}. Всё в силе?", plan_id))
+        if kind == "soon":
+            address = f", {escape(card['placeAddress'])}" if card["placeAddress"] else ""
+            text = f"Через 2 часа сходка «{escape(card['title'])}». {escape(card['placeName'] or 'Место уточним')}{address}."
+        else:
+            text = f"{when}: <b>{escape(card['title'])}</b>, {slot}{where}. Всё в силе?"
+        rows = [[InlineKeyboardButton("Маршрут", url=route_url(card["placePoint"]))]] if card["placePoint"] else []
+        rows.append([InlineKeyboardButton("Открыть", web_app=WebAppInfo(f"{self.cfg.webapp_url}?startapp=p_{plan_id}"))])
+        self._spawn(self._dm(ids, text, plan_id, InlineKeyboardMarkup(rows)))
 
     def plan_deleted(self, card: dict, user_ids: list[int]) -> None:
         if timer := self._timers.pop(card["id"], None):
@@ -269,11 +337,16 @@ def create_bot(service: PlanService, cfg: Config) -> tuple[Application, BotNotif
                 reply_markup=open_button(cfg, "home", "Открыть Сходку"),
             )
             return
-        text = "Открыть сходку" if payload.startswith("p_") else "Открыть Сходку"
+        if payload.startswith("p_"):
+            await update.effective_message.reply_text("Вот сходка:", reply_markup=open_button(cfg, payload, "Открыть сходку"))
+            return
         await update.effective_message.reply_text(
-            "Сходка помогает договориться о встрече: когда всем удобно и куда пойти.\n\n"
-            "Создайте сходку и отправьте её в чат с друзьями. Уведомления будут приходить сюда.",
-            reply_markup=open_button(cfg, payload or "home", text),
+            "Сходка помогает собраться с друзьями.\n\n"
+            "1. Создайте сходку: дни, время и место.\n"
+            "2. Отправьте её в чат с друзьями.\n"
+            "3. Мы найдём время, которое подходит всем.\n\n"
+            "Ответы и итог будут приходить сюда.",
+            reply_markup=open_button(cfg, "new", "Создать сходку"),
         )
 
     async def plan_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -302,6 +375,31 @@ def create_bot(service: PlanService, cfg: Config) -> tuple[Application, BotNotif
             await context.bot.send_message(change.chat.id, text, reply_markup=markup)
         except TelegramError as err:
             log.warning("Не удалось поздороваться в группе %s: %s", change.chat.id, err)
+
+    # Кнопка «Подтвердить и сообщить всем» из сообщения о сроке ответа.
+    async def confirm_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        query: CallbackQuery = update.callback_query
+        match = CONFIRM_DATA.match(query.data or "")
+        if not match:
+            await query.answer()
+            return
+        plan_id, key = match.groups()
+        try:
+            card = service.card(plan_id)
+            if card["ownerId"] != query.from_user.id:
+                await query.answer("Подтверждает только организатор", show_alert=True)
+                return
+            service.confirm(plan_id, query.from_user.id, key, card["placeId"] or card["leadingPlaceId"])
+        except HttpError as err:
+            await query.answer(err.message, show_alert=True)
+            return
+        date, time = key.split("T")
+        await query.answer("Готово, всем сообщили")
+        await query.edit_message_text(
+            f"Подтверждено: <b>{escape(card['title'])}</b>, {slot_label(date, time)}.",
+            parse_mode=ParseMode.HTML,
+            reply_markup=open_button(cfg, f"p_{plan_id}", "Открыть"),
+        )
 
     def inline_article(card: dict) -> InlineQueryResultArticle:
         return InlineQueryResultArticle(
@@ -346,6 +444,7 @@ def create_bot(service: PlanService, cfg: Config) -> tuple[Application, BotNotif
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("plan", plan_command))
     app.add_handler(ChatMemberHandler(added_to_chat, ChatMemberHandler.MY_CHAT_MEMBER))
+    app.add_handler(CallbackQueryHandler(confirm_button))
     app.add_handler(InlineQueryHandler(inline_query))
     app.add_handler(ChosenInlineResultHandler(chosen_result))
     return app, BotNotifier(app, service, cfg)

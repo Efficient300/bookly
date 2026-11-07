@@ -11,7 +11,7 @@ const MONTHS_AHEAD = 12;
 
 const monthIndex = (d: Date) => d.getFullYear() * 12 + d.getMonth();
 
-/** Календарь по месяцам: можно выбрать любые дни на год вперёд. */
+/** Календарь по месяцам: выбранные дни — круги чернилами, сегодня обведено. */
 export function MonthCalendar({
   value,
   onChange,
@@ -39,20 +39,13 @@ export function MonthCalendar({
 
   function toggle(day: string) {
     haptic.select();
-    if (value.includes(day)) {
-      onChange(value.filter((d) => d !== day));
-    } else if (value.length >= max) {
-      onLimit();
-    } else {
-      onChange([...value, day].sort());
-    }
+    if (value.includes(day)) onChange(value.filter((d) => d !== day));
+    else if (value.length >= max) onLimit();
+    else onChange([...value, day].sort());
   }
 
-  // Сколько выбранных дней в других месяцах — чтобы их не потерять из виду.
-  const elsewhere = value.filter((d) => !d.startsWith(`${year}-${String(month + 1).padStart(2, '0')}-`)).length;
-
   return (
-    <div className="cal">
+    <div className="stack" style={{ gap: 8 }}>
       <div className="cal-head">
         <button
           type="button"
@@ -63,9 +56,9 @@ export function MonthCalendar({
         >
           <IconChevronLeft size={18} />
         </button>
-        <div className="cal-title" aria-live="polite">
-          {title.charAt(0).toUpperCase() + title.slice(1)} {year !== today.getFullYear() && year}
-        </div>
+        <span aria-live="polite">
+          {title.charAt(0).toUpperCase() + title.slice(1)} {year}
+        </span>
         <button
           type="button"
           className="cal-nav"
@@ -76,7 +69,7 @@ export function MonthCalendar({
           <IconChevron size={18} />
         </button>
       </div>
-      <div className="cal-grid">
+      <div className="cal">
         {WEEKDAYS.map((w) => (
           <span key={w} className="cal-wd" aria-hidden="true">
             {w}
@@ -95,11 +88,10 @@ export function MonthCalendar({
             disabled={day < todayKey}
             onClick={() => toggle(day)}
           >
-            {i + 1}
+            <i>{i + 1}</i>
           </button>
         ))}
       </div>
-      {elsewhere > 0 && <div className="caption">Ещё выбрано в других месяцах: {elsewhere}</div>}
     </div>
   );
 }

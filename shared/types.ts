@@ -87,6 +87,8 @@ export interface PlaceView {
   custom: boolean;
   votes: number;
   liked: boolean;
+  /** Кто проголосовал за место. */
+  voters: Pick<Member, 'id' | 'name' | 'photo'>[];
   travel: string | null;
 }
 
@@ -148,6 +150,7 @@ export interface PlanSummary {
   id: string;
   title: string;
   format: Format;
+  days: string[];
   status: PlanStatus;
   isOwner: boolean;
   needsAnswer: boolean;
@@ -158,6 +161,19 @@ export interface PlanSummary {
   placeName: string | null;
   going: Pick<Member, 'id' | 'name' | 'photo'>[];
   responded: number;
+  /** Сколько человек открыли сходку, вместе с организатором. */
+  total: number;
+}
+
+/** Заведение из поиска: координаты и расстояние от центра карты, в метрах. */
+export interface FoundPlace {
+  lat: number;
+  lng: number;
+  name: string;
+  address: string | null;
+  kind: string | null;
+  url: string | null;
+  distance: number;
 }
 
 export interface MePatch {

@@ -28,23 +28,28 @@ export function PlacePicker({
   const point = placePoint(value);
 
   return (
-    <div className="list">
-      <button type="button" className="list-row" onClick={() => setOpen(true)}>
-        <span className="icon-box">
+    <div className="group">
+      <button type="button" className="row" onClick={() => setOpen(true)}>
+        <span className="row-icon">
           <IconPin size={20} />
         </span>
-        <span className="grow list-title">{point ? 'Изменить на карте' : 'Выбрать на карте'}</span>
-        <IconChevron size={18} style={{ color: 'var(--muted)' }} />
+        <span className="lbl">
+          <span>{point ? value.name || 'Место на карте' : 'Выбрать на карте'}</span>
+          <span className="sub">{point ? 'Изменить' : 'Поиск по Ташкенту или точка на карте'}</span>
+        </span>
+        <IconChevron size={16} className="chev" />
       </button>
       {point && (
-        <label className="list-row input-row" htmlFor={`${id}-name`}>
-          <span className="input-label">Название</span>
+        <label className="row" htmlFor={`${id}-name`}>
+          <span className="lbl">
+            <span>Название</span>
+          </span>
           <input
             id={`${id}-name`}
-            className="grow"
+            style={{ flex: 2, minWidth: 0 }}
             value={value.name}
             maxLength={60}
-            placeholder="Например, кафе «Чайхана»"
+            placeholder="Например, чайхана «Навруз»"
             onChange={(e) => onChange({ ...value, name: e.target.value })}
           />
         </label>

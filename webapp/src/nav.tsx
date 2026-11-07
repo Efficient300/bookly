@@ -6,6 +6,7 @@ export type Route =
   | { name: 'home' }
   | { name: 'create'; template?: Partial<NewPlan>; chatId?: number }
   | { name: 'plan'; id: string }
+  | { name: 'ready'; id: string; posted: boolean }
   | { name: 'results'; id: string }
   | { name: 'places'; id: string }
   | { name: 'area'; id: string };

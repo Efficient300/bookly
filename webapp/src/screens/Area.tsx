@@ -1,42 +1,51 @@
-import { useEffect, useRef, useState } from 'react';
+import { useState } from 'react';
 import type { LatLng } from '../../../shared/types.ts';
 import { api } from '../api.ts';
-import { IconMapPinFilled, IconTarget } from '../components/icons.tsx';
-import { MapView } from '../components/MapView.tsx';
-import { BottomBar, ErrorBox, MainButton, Spinner, useToast } from '../components/ui.tsx';
-import { CITY_CENTER } from '../lib/ymaps.ts';
+import { IconTarget } from '../components/icons.tsx';
+import { ActionBar, ErrorBox, Spinner, useToast } from '../components/ui.tsx';
 import { useNav, usePlan } from '../nav.tsx';
-import { expandApp, getLocation, haptic } from '../telegram.ts';
+import { getLocation, haptic } from '../telegram.ts';
 
-/** Выбор района «откуда поеду»: двигаем карту под булавкой. Храним с точностью ~1 км. */
+/** Районы Ташкента и их примерные центры. Сервер всё равно хранит точку с точностью ~1 км. */
+const DISTRICTS: { name: string; at: LatLng }[] = [
+  { name: 'Алмазар', at: { lat: 41.348, lng: 69.211 } },
+  { name: 'Бектемир', at: { lat: 41.209, lng: 69.334 } },
+  { name: 'Мирабад', at: { lat: 41.287, lng: 69.284 } },
+  { name: 'Мирзо-Улугбек', at: { lat: 41.338, lng: 69.334 } },
+  { name: 'Сергели', at: { lat: 41.222, lng: 69.218 } },
+  { name: 'Учтепа', at: { lat: 41.3, lng: 69.18 } },
+  { name: 'Чиланзар', at: { lat: 41.276, lng: 69.203 } },
+  { name: 'Шайхантахур', at: { lat: 41.327, lng: 69.239 } },
+  { name: 'Юнусабад', at: { lat: 41.367, lng: 69.287 } },
+  { name: 'Яккасарай', at: { lat: 41.287, lng: 69.257 } },
+  { name: 'Яшнабад', at: { lat: 41.29, lng: 69.335 } },
+  { name: 'Янгихаёт', at: { lat: 41.19, lng: 69.258 } },
+];
+
+function nearest(point: LatLng): string {
+  const d = (a: LatLng) => (a.lat - point.lat) ** 2 + (a.lng - point.lng) ** 2;
+  return DISTRICTS.reduce((best, x) => (d(x.at) < d(best.at) ? x : best)).name;
+}
+
+/** «Откуда поедете»: район чипом, геопозиция — по желанию. */
 export function Area({ id }: { id: string }) {
   const nav = useNav();
   const toast = useToast();
   const { plan, setPlan, error, reload } = usePlan(id);
-  useEffect(expandApp, []);
-  const center = useRef<LatLng | null>(null);
-  const [focus, setFocus] = useState<LatLng | null>(null);
   const [busy, setBusy] = useState(false);
+  const [picked, setPicked] = useState<{ name: string; at: LatLng } | null>(null);
 
   if (error && !plan) return <ErrorBox message={error} onRetry={reload} />;
   if (!plan) return <Spinner />;
 
-  const firstPlace = plan.places.find((p) => p.lat !== null && p.lng !== null);
-  const start =
-    plan.me.area ?? plan.center ?? (firstPlace ? { lat: firstPlace.lat as number, lng: firstPlace.lng as number } : CITY_CENTER);
+  const current = picked?.name ?? (plan.me.area ? nearest(plan.me.area) : null);
 
-  async function locate() {
-    const here = await getLocation();
-    if (here) setFocus(here);
-    else toast('Не удалось определить местоположение');
-  }
-
-  async function save(area: LatLng | null) {
+  async function save(area: LatLng, name: string) {
     setBusy(true);
     try {
       setPlan(await api.updateMe(id, { area }));
+      setPicked({ name, at: area });
       haptic.success();
-      nav.pop();
     } catch (e) {
       toast((e as Error).message);
     } finally {
@@ -44,43 +53,63 @@ export function Area({ id }: { id: string }) {
     }
   }
 
+  async function locate() {
+    const here = await getLocation();
+    if (!here) {
+      toast('Не удалось определить местоположение');
+      return;
+    }
+    void save(here, nearest(here));
+  }
+
   return (
     <div className="screen">
-      <div className="head" style={{ padding: '20px 20px 12px' }}>
-        <h1 className="h1" style={{ fontSize: 24 }}>
-          Откуда поедете?
-        </h1>
-        <div className="caption">Двигайте карту. Сохраним только район — точный адрес никто не увидит.</div>
-      </div>
-      <div style={{ position: 'relative', flex: 1, display: 'flex' }}>
-        <MapView
-          className="map tall"
-          initialView={start}
-          focus={focus}
-          onMoveEnd={(c) => {
-            center.current = c;
-          }}
-        />
-        <div className="center-pin" aria-hidden="true">
-          <IconMapPinFilled />
+      <main className="content">
+        <div className="stack" style={{ gap: 8 }}>
+          <span className="note">{plan.title}</span>
+          <h1 className="h1">Откуда вы поедете?</h1>
+          <p className="note" style={{ margin: 0 }}>
+            {plan.isOwner ? 'Вы выберете' : `${plan.ownerName} выберет`} место посередине между всеми. Точный адрес не нужен, только район.
+          </p>
         </div>
-      </div>
-      <BottomBar>
-        <div className="row">
-          <button type="button" className="btn-secondary row grow" style={{ justifyContent: 'center' }} onClick={locate}>
-            <IconTarget size={18} />
-            Я здесь
-          </button>
-          {plan.me.area && (
-            <button type="button" className="btn-secondary grow" onClick={() => save(null)} disabled={busy}>
-              Убрать отметку
+
+        <div className="chips" role="group" aria-label="Район">
+          {DISTRICTS.map((d) => (
+            <button
+              key={d.name}
+              type="button"
+              className="chip"
+              aria-pressed={current === d.name}
+              disabled={busy}
+              onClick={() => {
+                haptic.select();
+                void save(d.at, d.name);
+              }}
+            >
+              {d.name}
             </button>
-          )}
+          ))}
         </div>
-        <MainButton busy={busy} onClick={() => save(center.current ?? start)}>
-          Сохранить район
-        </MainButton>
-      </BottomBar>
+
+        <button type="button" className="btn-link" onClick={locate} disabled={busy}>
+          <IconTarget size={20} />
+          Определить по геопозиции
+        </button>
+
+        {current && <span className="note">Готово: {current}</span>}
+      </main>
+
+      <ActionBar
+        main={{
+          label: 'Готово',
+          disabled: !current,
+          onClick: () => {
+            toast('Ответ отправлен');
+            nav.reset([{ name: 'home' }, { name: 'plan', id }]);
+          },
+        }}
+        note={current ? null : 'Выберите район'}
+      />
     </div>
   );
 }

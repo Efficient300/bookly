@@ -3,15 +3,14 @@ import { joinNames, plural, weekdayShort } from '../../../shared/format.ts';
 import type { SlotStat } from '../../../shared/types.ts';
 import { api } from '../api.ts';
 import { IconBell, IconCheck, IconChevron } from '../components/icons.tsx';
-import { HeatGrid, HeatLegend } from '../components/SlotGrid.tsx';
-import { AvatarStack, BottomBar, DateTile, ErrorBox, MainButton, Spinner, useToast } from '../components/ui.tsx';
+import { HeatGrid } from '../components/SlotGrid.tsx';
+import { ActionBar, AvatarStack, DateTile, ErrorBox, Spinner, useToast } from '../components/ui.tsx';
 import { useNav, usePlan } from '../nav.tsx';
 import { haptic } from '../telegram.ts';
 
 function slotHint(s: SlotStat, responded: number): string {
-  const parts = [`Могут ${s.good + s.maybe} из ${responded}`];
+  const parts = [`Подходит ${s.good + s.maybe} из ${responded}`];
   if (s.missing.length) parts.push(`не ${s.missing.length === 1 ? 'может' : 'могут'} ${joinNames(s.missing)}`);
-  if (s.maybeNames.length) parts.push(`«если надо»: ${joinNames(s.maybeNames)}`);
   return parts.join(' · ');
 }
 
@@ -44,7 +43,7 @@ export function Results({ id }: { id: string }) {
     try {
       await api.confirm(id, slot, place);
       haptic.success();
-      toast('Готово! Сообщили всем в чате');
+      toast('Готово! Всем сообщили');
       nav.reset([{ name: 'home' }, { name: 'plan', id }]);
     } catch (e) {
       toast((e as Error).message);
@@ -65,35 +64,35 @@ export function Results({ id }: { id: string }) {
   return (
     <div className="screen">
       <main className="content">
-        <div className="head">
-          <div className="caption">{plan.title}</div>
+        <div className="stack" style={{ gap: 10 }}>
+          <span className="note">{plan.title}</span>
           <h1 className="h1">Итоги</h1>
-          <div className="row" style={{ gap: 10, paddingTop: 2 }}>
-            <AvatarStack people={plan.members.filter((m) => m.status !== null)} size={24} />
-            <span className="caption grow">
-              Ответили: {plan.responded}
+          <span className="row-flex" style={{ gap: 12 }}>
+            <AvatarStack people={plan.members.filter((m) => m.status !== null)} waiting={pending.length} />
+            <span className="note grow">
+              Ответили {plan.responded} из {plan.members.length}
               {pending.length > 0 && ` · ждём ${joinNames(pending.map((m) => m.name))}`}
             </span>
-          </div>
+          </span>
           {(pending.length > 0 || plan.inGroup) && (
-            <button type="button" className="btn-link row" onClick={nudge}>
-              <IconBell size={17} />
+            <button type="button" className="btn-link" onClick={nudge}>
+              <IconBell size={18} />
               Напомнить
             </button>
           )}
         </div>
 
-        <section className="section">
-          <h2 className="h2">Лучшее время</h2>
+        <section className="stack">
+          <h2 className="section-title">Лучшее время</h2>
           {plan.top.length === 0 ? (
-            <div className="card caption">Пока никто не отметил время.</div>
+            <div className="error-box">Пока никто не отметил время.</div>
           ) : (
-            <div className="list">
+            <div className="group">
               {plan.top.map((s, i) => (
                 <button
                   key={s.key}
                   type="button"
-                  className="list-row"
+                  className="row"
                   aria-pressed={slot === s.key}
                   onClick={() => {
                     haptic.select();
@@ -101,73 +100,82 @@ export function Results({ id }: { id: string }) {
                   }}
                 >
                   <DateTile day={s.date} />
-                  <span className="grow row-text">
-                    <span className="list-title strong">
+                  <span className="lbl">
+                    <span>
                       {s.time}
-                      {i === 0 && <span className="pill accent" style={{ marginLeft: 8 }}>Лучшее</span>}
+                      {i === 0 && <span className="tag on" style={{ marginLeft: 8, verticalAlign: 2 }}>Лучшее</span>}
                     </span>
-                    <span className="caption">{slotHint(s, plan.responded)}</span>
+                    <span className="sub">{slotHint(s, plan.responded)}</span>
                   </span>
-                  {slot === s.key && <IconCheck size={22} strokeWidth={2.5} className="row-check" />}
+                  <span className="check" aria-hidden="true">
+                    <IconCheck size={16} strokeWidth={2} />
+                  </span>
                 </button>
               ))}
             </div>
           )}
-          <button type="button" className="btn-link row" aria-expanded={showAll} onClick={() => setShowAll(!showAll)}>
-            {showAll ? 'Скрыть таблицу' : 'Показать всю таблицу'}
-            <IconChevron size={14} style={{ transform: showAll ? 'rotate(-90deg)' : 'rotate(90deg)' }} />
+          <button type="button" className="btn-link" aria-expanded={showAll} onClick={() => setShowAll(!showAll)}>
+            {showAll ? 'Скрыть таблицу' : 'Вся таблица'}
+            <IconChevron size={16} className="chev" />
           </button>
-          {showAll && (
-            <section className="card" aria-label="Сколько человек свободно в каждый слот">
-              <HeatGrid days={plan.days} times={plan.times} heat={plan.heat} total={plan.responded} bestKey={plan.top[0]?.key ?? null} />
-              <HeatLegend total={plan.responded} />
-            </section>
-          )}
+          {showAll && <HeatGrid days={plan.days} times={plan.times} heat={plan.heat} total={plan.responded} bestKey={plan.top[0]?.key ?? null} />}
         </section>
 
-        <section className="section">
-          <h2 className="h2">Место</h2>
-          <div className="list">
+        <section className="stack">
+          <h2 className="section-title">Место</h2>
+          <div className="group">
             {placeOptions.map((p) => (
               <button
                 key={p.id}
                 type="button"
-                className="list-row"
+                className="row"
                 aria-pressed={place === p.id}
                 onClick={() => {
                   haptic.select();
                   setPlace(p.id);
                 }}
               >
-                <span className="grow row-text">
-                  <span className="list-title">{p.name}</span>
-                  <span className="caption">
-                    {plan.votePlace ? `${p.votes} ${plural(p.votes, ['голос', 'голоса', 'голосов'])}` : p.kind}
+                <span className="lbl">
+                  <span>{p.name}</span>
+                  <span className="sub">
+                    {plan.votePlace ? `${p.votes} ${plural(p.votes, ['голос', 'голоса', 'голосов'])}` : (p.address ?? p.kind)}
                     {p.travel ? ` · ${p.travel}` : ''}
                   </span>
                 </span>
-                {place === p.id && <IconCheck size={22} strokeWidth={2.5} className="row-check" />}
+                <span className="check" aria-hidden="true">
+                  <IconCheck size={16} strokeWidth={2} />
+                </span>
               </button>
             ))}
-            <button type="button" className="list-row" aria-pressed={place === null} onClick={() => setPlace(null)}>
-              <span className="grow list-title">Решим позже</span>
-              {place === null && <IconCheck size={22} strokeWidth={2.5} className="row-check" />}
+            <button type="button" className="row" aria-pressed={place === null} onClick={() => setPlace(null)}>
+              <span className="lbl">
+                <span>Решим позже</span>
+              </span>
+              <span className="check" aria-hidden="true">
+                <IconCheck size={16} strokeWidth={2} />
+              </span>
             </button>
             {plan.votePlace && (
-              <button type="button" className="list-row" onClick={() => nav.push({ name: 'places', id })}>
-                <span className="grow list-title accent-text">Открыть голосование</span>
-                <IconChevron size={16} className="row-chevron" />
+              <button type="button" className="row" onClick={() => nav.push({ name: 'places', id })}>
+                <span className="lbl">
+                  <span>Открыть голосование</span>
+                </span>
+                <IconChevron size={16} className="chev" />
               </button>
             )}
           </div>
         </section>
       </main>
 
-      <BottomBar>
-        <MainButton onClick={confirm} busy={busy} disabled={!chosenSlot}>
-          {chosenSlot ? `Подтвердить: ${weekdayShort(chosenSlot.date)}, ${chosenSlot.time}` : 'Выберите время'}
-        </MainButton>
-      </BottomBar>
+      <ActionBar
+        note={chosenSlot ? null : 'Выберите время'}
+        main={{
+          label: chosenSlot ? `Подтвердить: ${weekdayShort(chosenSlot.date)}, ${chosenSlot.time}` : 'Подтвердить',
+          onClick: confirm,
+          disabled: !chosenSlot,
+          busy,
+        }}
+      />
     </div>
   );
 }

@@ -27,6 +27,7 @@ class Notifier(Protocol):
     def nudge(self, plan_id: str, user_ids: list[int]) -> None: ...
     def remind(self, plan_id: str, kind: str) -> None: ...
     def plan_deleted(self, card: dict, user_ids: list[int]) -> None: ...
+    def deadline_passed(self, plan_id: str) -> None: ...
     async def post_card(self, plan_id: str, chat_id: int, user_id: int) -> bool: ...
 
 
@@ -38,6 +39,7 @@ class NoopNotifier:
     def nudge(self, plan_id: str, user_ids: list[int]) -> None: pass
     def remind(self, plan_id: str, kind: str) -> None: pass
     def plan_deleted(self, card: dict, user_ids: list[int]) -> None: pass
+    def deadline_passed(self, plan_id: str) -> None: pass
     async def post_card(self, plan_id: str, chat_id: int, user_id: int) -> bool: return False
 
 
@@ -245,6 +247,7 @@ class PlanService:
                 "id": row["id"],
                 "title": row["title"],
                 "format": row["format"],
+                "days": json.loads(row["days"]),
                 "status": status,
                 "isOwner": row["owner_id"] == user_id,
                 "expired": self._expired(row),
@@ -261,6 +264,7 @@ class PlanService:
                     if m["status"] == "go"
                 ],
                 "responded": sum(1 for m in members if m["status"] is not None),
+                "total": len(members),
             })
         return result
 
@@ -442,6 +446,7 @@ class PlanService:
         row = self._plan_row(plan_id)
         view = self._build(row, row["owner_id"])
         leading_place = next((p for p in view["places"] if p["votes"] > 0), None)
+        chosen = next((p for p in view["places"] if p["id"] == row["place_id"]), None)
         return {
             "id": row["id"],
             "title": row["title"],
@@ -456,6 +461,12 @@ class PlanService:
             "responded": [m["name"] for m in view["members"] if m["status"] is not None],
             "leading": view["top"][0] if view["top"] else None,
             "leadingPlace": leading_place["name"] if leading_place else None,
+            "leadingPlaceId": leading_place["id"] if leading_place else None,
+            "placeId": row["place_id"],
+            "placePoint": {"lat": chosen["lat"], "lng": chosen["lng"]} if chosen and chosen["lat"] is not None else None,
+            "placeAddress": (chosen["address"] or chosen["kind"]) if chosen else None,
+            "ownerId": row["owner_id"],
+            "total": len(view["members"]),
             "chosen": {"date": row["chosen_date"], "time": row["chosen_time"]} if row["chosen_date"] else None,
             "placeName": self._place_name(row),
             "going": [m["name"] for m in view["members"] if m["status"] == "go"],
@@ -469,6 +480,19 @@ class PlanService:
             for m in self._member_rows(plan_id)
             if m["allows_pm"] and keep({"status": m["status"], "remind": bool(m["remind"]), "isOwner": m["user_id"] == row["owner_id"]})
         ]
+
+    def due_deadlines(self, now: datetime) -> list[str]:
+        """Сборы, у которых только что вышел срок ответа. Каждый возвращается один раз."""
+        stamp = now.astimezone(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+        rows = self.db.execute(
+            """SELECT id FROM plans WHERE status = 'collecting' AND deadline IS NOT NULL
+               AND deadline <= ? AND deadline_notified = 0""",
+            (stamp,),
+        ).fetchall()
+        ids = [r["id"] for r in rows]
+        for plan_id in ids:
+            self.db.execute("UPDATE plans SET deadline_notified = 1 WHERE id = ?", (plan_id,))
+        return ids
 
     def due_reminders(self, now: datetime) -> list[dict]:
         rows = self.db.execute(
@@ -658,6 +682,13 @@ class PlanService:
             r["place_id"]
             for r in self.db.execute("SELECT place_id FROM votes WHERE plan_id = ? AND user_id = ?", (row["id"], user_id))
         }
+        voters: dict[str, list[dict]] = {}
+        for r in self.db.execute(
+            """SELECT v.place_id, u.id, u.name, u.photo_url FROM votes v
+               JOIN users u ON u.id = v.user_id WHERE v.plan_id = ? ORDER BY v.rowid""",
+            (row["id"],),
+        ):
+            voters.setdefault(r["place_id"], []).append({"id": r["id"], "name": r["name"], "photo": r["photo_url"]})
 
         catalog = filter_places(self.places, row["format"], row["budget"])
         chosen = self._catalog_place(row["place_id"]) if row["place_id"] else None
@@ -681,6 +712,7 @@ class PlanService:
                 "custom": False,
                 "votes": counts.get(p["id"], 0),
                 "liked": p["id"] in mine,
+                "voters": voters.get(p["id"], []),
                 "travel": travel_range(p, areas),
             }
             for p in catalog
@@ -703,6 +735,7 @@ class PlanService:
                 "custom": True,
                 "votes": counts.get(c["id"], 0),
                 "liked": c["id"] in mine,
+                "voters": voters.get(c["id"], []),
                 "travel": travel_range({"lat": c["lat"], "lng": c["lng"]}, areas) if has_point else None,
             })
 

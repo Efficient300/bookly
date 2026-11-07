@@ -9,7 +9,7 @@ function base({ size = 20, ...rest }: IconProps): SVGProps<SVGSVGElement> {
     viewBox: '0 0 24 24',
     fill: 'none',
     stroke: 'currentColor',
-    strokeWidth: 2,
+    strokeWidth: 1.75,
     strokeLinecap: 'round',
     strokeLinejoin: 'round',
     'aria-hidden': true,
@@ -202,5 +202,35 @@ export const IconSparkles = (p: IconProps) => (
 export const IconUpDown = (p: IconProps) => (
   <svg {...base(p)}>
     <path d="M8 10l4-4 4 4M8 14l4 4 4-4" />
+  </svg>
+);
+
+export const IconPencil = (p: IconProps) => (
+  <svg {...base(p)}>
+    <path d="M4 20h4L19 9l-4-4L4 16z" />
+    <path d="M13.5 6.5l4 4" />
+  </svg>
+);
+
+export const IconCopy = (p: IconProps) => (
+  <svg {...base(p)}>
+    <rect x="9" y="9" width="11" height="11" rx="2.5" />
+    <path d="M15 9V6.5A2.5 2.5 0 0 0 12.5 4h-6A2.5 2.5 0 0 0 4 6.5v6A2.5 2.5 0 0 0 6.5 15H9" />
+  </svg>
+);
+
+export const IconRoute = (p: IconProps) => (
+  <svg {...base(p)}>
+    <circle cx="6" cy="18" r="2.5" />
+    <circle cx="18" cy="6" r="2.5" />
+    <path d="M8.5 18H16a3 3 0 0 0 0-6H8a3 3 0 0 1 0-6h7.5" />
+  </svg>
+);
+
+export const IconWallet = (p: IconProps) => (
+  <svg {...base(p)}>
+    <path d="M4 7.5A2.5 2.5 0 0 1 6.5 5H18v4" />
+    <rect x="4" y="9" width="16" height="10" rx="2.5" />
+    <path d="M16 14h.01" />
   </svg>
 );

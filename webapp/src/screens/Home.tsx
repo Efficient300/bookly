@@ -1,19 +1,72 @@
 import { useEffect, useState } from 'react';
-import { dayLabel, deadlineLabel, plural, slotLabel } from '../../../shared/format.ts';
+import { daysRangeLabel, deadlineLabel, plural, slotLabel } from '../../../shared/format.ts';
 import type { Me, PlanSummary } from '../../../shared/types.ts';
 import { api } from '../api.ts';
-import { FormatTile, PlanCover } from '../components/PlanCover.tsx';
-import { IconBell, IconChevron, IconPlus } from '../components/icons.tsx';
-import { Avatar, ErrorBox, MainButton, Spinner, useToast } from '../components/ui.tsx';
-import { daysUntil } from '../lib/links.ts';
+import { IconBell, IconCalendar, IconPin, IconPlus } from '../components/icons.tsx';
+import { ActionBar, AvatarStack, ErrorBox, Spinner, StatusTag, useToast } from '../components/ui.tsx';
 import { useNav } from '../nav.tsx';
 import { askWriteAccess, haptic, inTelegram, openBotChat } from '../telegram.ts';
 
-function whenLabel(day: string): string {
-  const n = daysUntil(day);
-  if (n === 0) return 'Сегодня';
-  if (n === 1) return 'Завтра';
-  return `Через ${n} ${plural(n, ['день', 'дня', 'дней'])}`;
+const ONBOARDING = [
+  { title: 'Создайте сходку', text: 'Категория, дни, время, место' },
+  { title: 'Отправьте в чат', text: 'Друзья откроют её прямо из Telegram' },
+  { title: 'Получите итог', text: 'Бот напишет, когда всё решится' },
+];
+
+function PlanCard({ plan, onOpen }: { plan: PlanSummary; onOpen: () => void }) {
+  const status = plan.expired ? 'expired' : plan.status;
+  const waiting = Math.max(0, plan.total - plan.responded);
+  return (
+    <button type="button" className="card" onClick={onOpen}>
+      <span className="row-flex" style={{ justifyContent: 'space-between' }}>
+        <StatusTag status={status} />
+        {plan.needsAnswer && <span className="tag on">Ваш ответ</span>}
+      </span>
+      <span className="card-title">{plan.title}</span>
+      {plan.chosen ? (
+        <>
+          <span className="meta">
+            <IconCalendar size={16} />
+            {slotLabel(plan.chosen.date, plan.chosen.time)}
+          </span>
+          {plan.placeName && (
+            <span className="meta">
+              <IconPin size={16} />
+              <span className="ellipsis">{plan.placeName}</span>
+            </span>
+          )}
+        </>
+      ) : (
+        <span className="meta">
+          <IconCalendar size={16} />
+          {plan.days.length ? daysRangeLabel(plan.days) : 'Дни не выбраны'}
+          {plan.deadline && status === 'collecting' ? ` · до ${deadlineLabel(plan.deadline)}` : ''}
+        </span>
+      )}
+      {status === 'confirmed' ? (
+        plan.going.length > 0 && (
+          <span className="row-flex" style={{ gap: 10 }}>
+            <AvatarStack people={plan.going} />
+            <span className="note">
+              {plan.going.length} {plural(plan.going.length, ['идёт', 'идут', 'идут'])}
+            </span>
+          </span>
+        )
+      ) : status === 'collecting' ? (
+        <span className="stack" style={{ gap: 8 }}>
+          <span className="row-flex" style={{ justifyContent: 'space-between' }}>
+            <AvatarStack people={plan.going} waiting={waiting} />
+            <span className="note">
+              Ответили {plan.responded} из {plan.total}
+            </span>
+          </span>
+          <span className="progress" aria-hidden="true">
+            <span style={{ width: `${plan.total ? (plan.responded / plan.total) * 100 : 0}%` }} />
+          </span>
+        </span>
+      ) : null}
+    </button>
+  );
 }
 
 export function Home() {
@@ -34,17 +87,6 @@ export function Home() {
   };
   useEffect(load, []);
 
-  if (error) return <ErrorBox message={error} onRetry={load} />;
-  if (!plans) return <Spinner />;
-
-  const upcoming = plans
-    .filter((p) => p.status === 'confirmed' && p.chosen)
-    .sort((a, b) => `${a.chosen!.date}T${a.chosen!.time}`.localeCompare(`${b.chosen!.date}T${b.chosen!.time}`));
-  const [next, ...laterPlans] = upcoming;
-  const waiting = plans.filter((p) => p.needsAnswer);
-  const collecting = plans.filter((p) => p.status === 'collecting' && !p.needsAnswer && !p.expired);
-  const past = plans.filter((p) => p.status === 'done' || p.expired).slice(0, 5);
-  const open = (id: string) => nav.push({ name: 'plan', id });
   const create = () => nav.push({ name: 'create' });
 
   async function enableNotifications() {
@@ -64,131 +106,73 @@ export function Home() {
     toast('Уведомления будут приходить в чат с ботом');
   }
 
+  if (error) return <ErrorBox message={error} onRetry={load} />;
+  if (!plans) return <Spinner />;
+
+  const order = (p: PlanSummary) =>
+    p.needsAnswer ? 0 : p.status === 'confirmed' ? 1 : p.status === 'collecting' && !p.expired ? 2 : 3;
+  const sorted = [...plans].sort((a, b) => order(a) - order(b));
+  const empty = plans.length === 0;
+
   return (
     <div className="screen">
-      <header className="nav-large">
+      <header className="top-bar">
         <h1 className="h1">Сходки</h1>
-        <button type="button" className="round-btn" aria-label="Новая сходка" onClick={create}>
-          <IconPlus size={22} strokeWidth={2.5} />
-        </button>
+        {!empty && (
+          <button type="button" className="icon-btn" aria-label="Новая сходка" onClick={create}>
+            <IconPlus size={20} />
+          </button>
+        )}
       </header>
 
-      <main className="content" style={{ paddingTop: 8 }}>
+      <main className="content">
         {inTelegram && me && !me.allowsPm && (
-          <div className="list">
-            <div className="list-row">
-              <span className="icon-box orange">
+          <div className="group">
+            <div className="row">
+              <span className="row-icon">
                 <IconBell size={20} />
               </span>
-              <span className="grow row-text">
-                <span className="list-title">Уведомления в личку</span>
-                <span className="caption">Ответы, подтверждение и напоминания о встрече</span>
+              <span className="lbl">
+                <span>Уведомления в личку</span>
+                <span className="sub">Ответы, итог и напоминания</span>
               </span>
-              <button type="button" className="btn-small" onClick={enableNotifications}>
+              <button type="button" className="btn small ink" onClick={enableNotifications}>
                 Включить
               </button>
             </div>
           </div>
         )}
 
-        {plans.length === 0 && (
-          <div className="empty">
-            <FormatTile format="any" />
-            <div className="empty-title">Соберите друзей</div>
-            <div>Предложите дни, все отметят, когда удобно, а приложение найдёт лучшее время и место.</div>
-            <MainButton onClick={create}>Создать первую сходку</MainButton>
-          </div>
-        )}
-
-        {next && (
-          <button type="button" className="cover-btn" onClick={() => open(next.id)}>
-            <PlanCover format={next.format}>
-              <span className="cover-pill">{whenLabel(next.chosen!.date)}</span>
-              <span className="cover-title">{next.title}</span>
-              <span className="cover-sub">
-                {slotLabel(next.chosen!.date, next.chosen!.time)}
-                {next.placeName ? ` · ${next.placeName}` : ''}
-              </span>
-              {next.going.length > 0 && (
-                <span className="row" style={{ gap: 8, marginTop: 6 }}>
-                  <span className="avatars on-cover">
-                    {next.going.slice(0, 5).map((p) => (
-                      <Avatar key={p.id} name={p.name} seed={p.id} photo={p.photo} />
-                    ))}
-                  </span>
-                  <span className="cover-sub">
-                    {next.going.length} {plural(next.going.length, ['идёт', 'идут', 'идут'])}
-                  </span>
-                </span>
-              )}
-            </PlanCover>
-          </button>
-        )}
-
-        {waiting.length > 0 && (
-          <section className="section">
-            <div className="row" style={{ padding: '0 4px' }}>
-              <h2 className="h2">Ждут ответа</h2>
-              <span className="badge">{waiting.length}</span>
+        {empty ? (
+          <section className="stack" style={{ gap: 24, paddingTop: 8 }}>
+            <div className="stack" style={{ gap: 8 }}>
+              <h2 className="h1">Соберите друзей за пару минут</h2>
+              <p className="note" style={{ margin: 0 }}>
+                Вы предлагаете дни и время, друзья отмечают, когда свободны. Сходка выберет лучший вариант.
+              </p>
             </div>
-            <div className="list">
-              {waiting.map((p) => (
-                <button key={p.id} type="button" className="list-row" onClick={() => open(p.id)}>
-                  <FormatTile format={p.format} />
-                  <span className="grow row-text">
-                    <span className="list-title">{p.title}</span>
-                    <span className="caption">{p.deadline ? `До ${deadlineLabel(p.deadline)}` : 'Когда вам удобно?'}</span>
+            <ol className="steps-list" style={{ margin: 0, padding: 0, listStyle: 'none' }}>
+              {ONBOARDING.map((s, i) => (
+                <li key={s.title} className="step">
+                  <span className="step-num">{i + 1}</span>
+                  <span className="stack" style={{ gap: 2 }}>
+                    <span style={{ fontWeight: 500 }}>{s.title}</span>
+                    <span className="note">{s.text}</span>
                   </span>
-                  <span className="btn-small">Ответить</span>
-                </button>
+                </li>
               ))}
-            </div>
+            </ol>
           </section>
-        )}
-
-        {(collecting.length > 0 || laterPlans.length > 0) && (
-          <section className="section">
-            <h2 className="h2">В работе</h2>
-            <div className="list">
-              {[...collecting, ...laterPlans].map((p) => (
-                <button key={p.id} type="button" className="list-row" onClick={() => open(p.id)}>
-                  <FormatTile format={p.format} />
-                  <span className="grow row-text">
-                    <span className="list-title">{p.title}</span>
-                    <span className="caption">
-                      {p.status === 'collecting'
-                        ? `Ответили: ${p.responded}${p.isOwner ? ' · вы организатор' : ''}`
-                        : `${slotLabel(p.chosen!.date, p.chosen!.time)}${p.placeName ? ` · ${p.placeName}` : ''}`}
-                    </span>
-                  </span>
-                  <IconChevron size={16} className="row-chevron" />
-                </button>
-              ))}
-            </div>
-          </section>
-        )}
-
-        {past.length > 0 && (
-          <section className="section">
-            <h2 className="h2">Прошедшие</h2>
-            <div className="list">
-              {past.map((p) => (
-                <button key={p.id} type="button" className="list-row" onClick={() => open(p.id)}>
-                  <FormatTile format={p.format} muted />
-                  <span className="grow row-text">
-                    <span className="list-title">{p.title}</span>
-                    <span className="caption">
-                      {p.chosen ? dayLabel(p.chosen.date) : 'Время не выбрали'}
-                      {p.placeName ? ` · ${p.placeName}` : ''}
-                    </span>
-                  </span>
-                  <IconChevron size={16} className="row-chevron" />
-                </button>
-              ))}
-            </div>
+        ) : (
+          <section className="stack">
+            {sorted.map((p) => (
+              <PlanCard key={p.id} plan={p} onOpen={() => nav.push({ name: 'plan', id: p.id })} />
+            ))}
           </section>
         )}
       </main>
+
+      <ActionBar main={{ label: empty ? 'Создать сходку' : 'Новая сходка', onClick: create }} />
     </div>
   );
 }

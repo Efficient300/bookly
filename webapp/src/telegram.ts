@@ -19,6 +19,8 @@ export interface TgWebApp {
   setBottomBarColor?(color: string): void;
   disableVerticalSwipes?(): void;
   onEvent(event: 'themeChanged', cb: () => void): void;
+  MainButton: NativeButton;
+  SecondaryButton?: NativeButton & { setParams(params: NativeButtonParams & { position?: 'bottom' | 'top' | 'left' | 'right' }): void };
   BackButton: {
     show(): void;
     hide(): void;
@@ -43,6 +45,22 @@ export interface TgWebApp {
   };
 }
 
+interface NativeButtonParams {
+  text?: string;
+  color?: string;
+  text_color?: string;
+  is_active?: boolean;
+  is_visible?: boolean;
+}
+
+interface NativeButton {
+  setParams(params: NativeButtonParams): void;
+  onClick(cb: () => void): void;
+  offClick(cb: () => void): void;
+  showProgress(leaveActive?: boolean): void;
+  hideProgress(): void;
+}
+
 declare global {
   interface Window {
     Telegram?: { WebApp: TgWebApp };
@@ -60,11 +78,13 @@ function applyTheme() {
     : window.matchMedia('(prefers-color-scheme: dark)').matches;
   document.documentElement.dataset.theme = dark ? 'dark' : 'light';
   if (tg && supports('6.9')) {
-    const bg = getComputedStyle(document.documentElement).getPropertyValue('--bg').trim();
+    const bg = getComputedStyle(document.documentElement).getPropertyValue('--c-bg').trim();
     tg.setHeaderColor(bg);
     tg.setBackgroundColor(bg);
     if (supports('7.10')) tg.setBottomBarColor?.(bg);
   }
+  // Цвета нативных кнопок тоже зависят от темы.
+  paint();
 }
 
 export function initTelegram() {
@@ -166,3 +186,91 @@ export function getLocation(): Promise<LatLng | null> {
     );
   });
 }
+
+// ---------- нативные кнопки внизу ----------
+
+export interface BarAction {
+  label: string;
+  onClick: () => void;
+  disabled?: boolean;
+  busy?: boolean;
+}
+
+export interface BarState {
+  main?: BarAction;
+  secondary?: BarAction;
+}
+
+/** Нативные MainButton и SecondaryButton есть в Telegram; вне его рисуем свою панель. */
+export const nativeBar = inTelegram && !!tg && supports('6.0');
+const nativeSecondary = nativeBar && supports('7.10') && !!tg?.SecondaryButton;
+
+// Кнопки одни на всё приложение: показываем состояние того экрана или окна, что открыто сверху.
+const stack: { id: number; state: BarState }[] = [];
+let mainHandler: (() => void) | null = null;
+let secondaryHandler: (() => void) | null = null;
+
+function paint() {
+  if (!nativeBar || !tg) return;
+  const theme = getComputedStyle(document.documentElement);
+  const color = (name: string) => theme.getPropertyValue(name).trim();
+  const state = stack[stack.length - 1]?.state ?? {};
+  const main = state.main;
+  if (mainHandler) tg.MainButton.offClick(mainHandler);
+  mainHandler = null;
+  if (main) {
+    const active = !main.disabled && !main.busy;
+    tg.MainButton.setParams({
+      text: main.label,
+      color: active || main.busy ? color('--c-lime') : color('--c-faint'),
+      text_color: active || main.busy ? color('--c-on-lime') : color('--c-muted'),
+      is_active: active,
+      is_visible: true,
+    });
+    if (main.busy) tg.MainButton.showProgress(false);
+    else tg.MainButton.hideProgress();
+    mainHandler = () => main.onClick();
+    tg.MainButton.onClick(mainHandler);
+  } else {
+    tg.MainButton.setParams({ is_visible: false });
+  }
+  if (!nativeSecondary || !tg.SecondaryButton) return;
+  const secondary = state.secondary;
+  if (secondaryHandler) tg.SecondaryButton.offClick(secondaryHandler);
+  secondaryHandler = null;
+  if (secondary) {
+    tg.SecondaryButton.setParams({
+      text: secondary.label,
+      color: color('--c-surface'),
+      text_color: color('--c-ink'),
+      is_active: !secondary.disabled,
+      is_visible: true,
+      position: 'bottom',
+    });
+    secondaryHandler = () => secondary.onClick();
+    tg.SecondaryButton.onClick(secondaryHandler);
+  } else {
+    tg.SecondaryButton.setParams({ is_visible: false });
+  }
+}
+
+let nextId = 0;
+
+export function pushBar(state: BarState): { update(state: BarState): void; remove(): void } {
+  const entry = { id: nextId++, state };
+  stack.push(entry);
+  paint();
+  return {
+    update(next) {
+      entry.state = next;
+      paint();
+    },
+    remove() {
+      const i = stack.indexOf(entry);
+      if (i >= 0) stack.splice(i, 1);
+      paint();
+    },
+  };
+}
+
+export const hasNativeSecondary = nativeSecondary;

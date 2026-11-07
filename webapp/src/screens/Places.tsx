@@ -1,46 +1,32 @@
-import { useEffect, useMemo, useState } from 'react';
-import type { FormEvent } from 'react';
-import { avgCheckLabel } from '../../../shared/format.ts';
-import type { LatLng, NewPlace, PlaceView, PlanView } from '../../../shared/types.ts';
+import { useState } from 'react';
+import { avgCheckLabel, plural } from '../../../shared/format.ts';
+import type { NewPlace, PlaceView } from '../../../shared/types.ts';
 import { api } from '../api.ts';
-import { IconHeart, IconPlus, IconStar } from '../components/icons.tsx';
-import { MapView } from '../components/MapView.tsx';
-import type { Person } from '../components/MapView.tsx';
-import { PlacePicker, emptyPlace } from '../components/PlacePicker.tsx';
-import { BottomBar, ErrorBox, MainButton, Spinner, useToast } from '../components/ui.tsx';
+import { IconCheck, IconPlus } from '../components/icons.tsx';
+import { MapPicker } from '../components/MapPicker.tsx';
+import { ActionBar, AvatarStack, ErrorBox, Spinner, useToast } from '../components/ui.tsx';
 import { useNav, usePlan } from '../nav.tsx';
-import { expandApp, haptic, openLink } from '../telegram.ts';
+import { haptic } from '../telegram.ts';
 
-function people(plan: PlanView): Person[] {
-  const list: Person[] = plan.areas.map((a) => ({ ...a }));
-  const photo = plan.members.find((m) => m.id === plan.me.id)?.photo ?? null;
-  if (plan.me.area) list.push({ ...plan.me.area, name: 'Я', photo, me: true });
-  return list;
-}
-
+/** Голосование за место: карточки с адресом, ценой и аватарами проголосовавших. */
 export function Places({ id }: { id: string }) {
   const nav = useNav();
   const toast = useToast();
   const { plan, setPlan, error, reload } = usePlan(id);
-  useEffect(expandApp, []);
-  const [focus, setFocus] = useState<LatLng | null>(null);
-  const [adding, setAdding] = useState(false);
-  const [draft, setDraft] = useState<NewPlace>(emptyPlace);
-
-  const mapPeople = useMemo(() => (plan ? people(plan) : []), [plan]);
+  const [picking, setPicking] = useState(false);
 
   if (error && !plan) return <ErrorBox message={error} onRetry={reload} />;
   if (!plan) return <Spinner />;
 
+  const done = () => nav.reset([{ name: 'home' }, { name: 'plan', id }]);
+
   async function toggleVote(place: PlaceView) {
-    if (!plan) return;
+    if (!plan || !plan.votePlace) return;
     haptic.select();
-    // Оптимистично: сразу показываем голос, потом синхронизируем с сервером.
+    // Сразу показываем голос, потом сверяемся с сервером.
     setPlan({
       ...plan,
-      places: plan.places.map((p) =>
-        p.id === place.id ? { ...p, liked: !p.liked, votes: p.votes + (p.liked ? -1 : 1) } : p,
-      ),
+      places: plan.places.map((p) => (p.id === place.id ? { ...p, liked: !p.liked, votes: p.votes + (p.liked ? -1 : 1) } : p)),
     });
     try {
       setPlan(await api.vote(id, place.id, !place.liked));
@@ -50,120 +36,102 @@ export function Places({ id }: { id: string }) {
     }
   }
 
-  async function suggest(e: FormEvent) {
-    e.preventDefault();
+  async function suggest(place: NewPlace) {
+    setPicking(false);
     try {
-      setPlan(await api.suggest(id, { ...draft, name: draft.name.trim() }));
-      setAdding(false);
-      setDraft(emptyPlace());
+      setPlan(await api.suggest(id, place));
       toast('Место добавлено');
-    } catch (err) {
-      toast((err as Error).message);
+    } catch (e) {
+      toast((e as Error).message);
     }
   }
 
-  const voters = plan.members.filter((m) => m.status !== null && m.status !== 'no').length;
   const firstPoint = plan.places.find((p) => p.lat !== null && p.lng !== null);
   const near = plan.center ?? plan.me.area ?? (firstPoint ? { lat: firstPoint.lat as number, lng: firstPoint.lng as number } : null);
+  const liked = plan.places.filter((p) => p.liked).length;
 
   return (
     <div className="screen">
-      <MapView places={plan.places} people={mapPeople} center={plan.middle ? plan.center : null} focus={focus} />
-
-      <section className="sheet">
-        <div className="handle" aria-hidden="true" />
-        <div className="row" style={{ justifyContent: 'space-between', alignItems: 'baseline', padding: '14px 4px 4px' }}>
-          <h1 className="h1" style={{ fontSize: 22 }}>
-            Где встретимся
-          </h1>
-          {plan.votePlace && <span className="caption">Участников: {voters}</span>}
-        </div>
-        <div className="caption" style={{ padding: '0 4px 8px' }}>
-          {plan.votePlace
-            ? 'Отметьте все места, которые вам нравятся'
-            : plan.placeId
-              ? 'Место выбрал организатор'
-              : 'Место выберет организатор'}
+      <main className="content">
+        <div className="stack" style={{ gap: 8 }}>
+          <span className="note">{plan.title}</span>
+          <h1 className="h1">{plan.votePlace ? 'Куда пойдём?' : 'Где встречаемся'}</h1>
+          <p className="note" style={{ margin: 0 }}>
+            {plan.votePlace
+              ? 'Можно выбрать несколько мест или предложить своё.'
+              : plan.placeId
+                ? 'Место выбрал организатор.'
+                : 'Место выберет организатор.'}
+          </p>
         </div>
 
-        <div>
-          {plan.places.map((p, i) => (
-            <div key={p.id} className="place-row">
-              <span className="place-num" aria-hidden="true">
-                {i + 1}
-              </span>
+        <div className="stack">
+          {plan.places.map((p) => {
+            const facts = [p.address ?? p.kind, avgCheckLabel(p.avgCheck)].filter(Boolean).join(' · ');
+            return (
               <button
+                key={p.id}
                 type="button"
-                className="grow"
-                style={{ border: 'none', background: 'none', padding: 0, textAlign: 'left', display: 'flex', flexDirection: 'column', gap: 3 }}
-                onClick={() => {
-                  if (p.lat !== null && p.lng !== null) setFocus({ lat: p.lat, lng: p.lng });
-                  else if (p.url) openLink(p.url);
-                }}
+                className="place-card"
+                aria-pressed={plan.votePlace ? p.liked : undefined}
+                disabled={!plan.votePlace}
+                onClick={() => toggleVote(p)}
               >
-                <span style={{ fontSize: 16, fontWeight: 600 }}>{p.name}</span>
-                <span className="row caption" style={{ gap: 4 }}>
-                  {[p.kind, avgCheckLabel(p.avgCheck)].filter(Boolean).join(' · ')}
-                  {p.rating !== null && (
-                    <>
-                      {' · '}
-                      <IconStar size={13} style={{ color: 'var(--amber)' }} />
-                      {p.rating.toFixed(1).replace('.', ',')}
-                    </>
+                <span className="grow stack" style={{ gap: 6 }}>
+                  <span style={{ fontSize: 17, fontWeight: 500 }} className="ellipsis">
+                    {p.name}
+                  </span>
+                  {facts && <span className="note ellipsis">{facts}</span>}
+                  {plan.votePlace && (
+                    <span className="row-flex" style={{ gap: 8 }}>
+                      {p.voters.length > 0 && <AvatarStack people={p.voters} size={24} />}
+                      <span className="note">
+                        {p.votes ? `${p.votes} ${plural(p.votes, ['голос', 'голоса', 'голосов'])}` : 'Пока без голосов'}
+                      </span>
+                    </span>
                   )}
+                  {p.travel && <span className="note">{p.travel}</span>}
                 </span>
-                {p.travel && <span className="caption">{p.travel}</span>}
-                {p.custom && p.url && <span className="caption" style={{ color: 'var(--accent)' }}>Открыть ссылку</span>}
-                {p.promo && (
-                  <span className="row" style={{ gap: 6, paddingTop: 2 }}>
-                    <span className="pill amber">{p.promo}</span>
-                    {p.partner && <span className="muted" style={{ fontSize: 11 }}>Партнёр</span>}
+                {plan.votePlace && (
+                  <span className="check" aria-hidden="true">
+                    <IconCheck size={16} strokeWidth={2} />
                   </span>
                 )}
               </button>
-              {plan.votePlace && (
-                <button
-                  type="button"
-                  className="vote"
-                  aria-pressed={p.liked}
-                  aria-label={`${p.liked ? 'Убрать голос' : 'Голосовать'}: ${p.name}`}
-                  onClick={() => toggleVote(p)}
-                >
-                  <IconHeart size={20} fill={p.liked ? 'currentColor' : 'none'} />
-                  {p.votes}
-                </button>
-              )}
-            </div>
-          ))}
+            );
+          })}
         </div>
 
-        {plan.votePlace &&
-          (adding ? (
-            <form className="card" style={{ padding: '12px 0 16px' }} onSubmit={suggest}>
-              <h2 className="h2" style={{ fontSize: 18 }}>
-                Своё место
-              </h2>
-              <PlacePicker id="suggest" value={draft} onChange={setDraft} format={plan.format} near={near} />
-              <div className="row">
-                <button type="submit" className="btn-small" disabled={!draft.name.trim() || draft.lat === null}>
-                  Добавить
-                </button>
-                <button type="button" className="btn-small outline" onClick={() => setAdding(false)}>
-                  Отмена
-                </button>
-              </div>
-            </form>
-          ) : (
-            <button type="button" className="btn-text" onClick={() => setAdding(true)}>
-              <IconPlus size={18} strokeWidth={2.5} />
-              Предложить своё место
-            </button>
-          ))}
-      </section>
+        {plan.votePlace && (
+          <button type="button" className="chip add" style={{ alignSelf: 'flex-start', height: 44, display: 'inline-flex', alignItems: 'center', gap: 8 }} onClick={() => setPicking(true)}>
+            <IconPlus size={18} />
+            Предложить своё место
+          </button>
+        )}
+      </main>
 
-      <BottomBar>
-        <MainButton onClick={() => nav.pop()}>Готово</MainButton>
-      </BottomBar>
+      {picking && (
+        <MapPicker
+          format={plan.format}
+          near={near}
+          initial={null}
+          onClose={() => setPicking(false)}
+          onSelect={(p) => void suggest({ name: p.name.slice(0, 60), url: null, lat: p.lat, lng: p.lng })}
+        />
+      )}
+
+      <ActionBar
+        main={{
+          label: plan.votePlace ? (liked ? `Отправить ответ · ${liked} ${plural(liked, ['место', 'места', 'мест'])}` : 'Отправить ответ') : 'Готово',
+          onClick: () => {
+            if (plan.middle && !plan.me.area) nav.push({ name: 'area', id });
+            else {
+              toast('Ответ отправлен');
+              done();
+            }
+          },
+        }}
+      />
     </div>
   );
 }

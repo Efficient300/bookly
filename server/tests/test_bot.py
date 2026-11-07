@@ -121,3 +121,45 @@ def test_blocked_bot_stops_private_messages():
     bot.send_message.side_effect = Forbidden("bot was blocked by the user")
     asyncio.run(notifier._dm([1], "Текст", plan_id))
     assert service.allows_pm(1) is False
+
+
+def test_answers_are_grouped_for_organizer():
+    notifier, service, plan_id, bot = make_notifier()
+    service.set_allows_pm(1, True)
+    service.upsert_user(2, "Камила")
+    service.upsert_user(3, "Тимур")
+
+    async def scenario():
+        service.update_me(plan_id, 2, {"status": "go"})
+        service.update_me(plan_id, 3, {"status": "no"})
+        await asyncio.gather(*notifier._tasks)
+        first = [c.args[1] for c in bot.send_message.await_args_list]
+        notifier._answer_windows.pop(plan_id).cancel()
+        notifier._answer_windows[plan_id] = None
+        notifier._close_window(plan_id)
+        await asyncio.gather(*notifier._tasks)
+        notifier._answer_windows.pop(plan_id).cancel()
+        return first, [c.args[1] for c in bot.send_message.await_args_list]
+
+    first, after = asyncio.run(scenario())
+    # На момент первого ответа Тимур ещё не открывал сходку.
+    assert len(first) == 1 and "Камила" in first[0] and "Ответили 1 из 2" in first[0]
+    assert len(after) == 2 and "Тимур (не сможет)" in after[1]
+
+
+def test_deadline_message_offers_best_option():
+    notifier, service, plan_id, bot = make_notifier()
+    service.set_allows_pm(1, True)
+    service.upsert_user(2, "Камила")
+
+    async def scenario():
+        service.update_me(plan_id, 2, {"status": "go", "slots": {"2030-01-05T12:00": 1}})
+        notifier._answer_windows.pop(plan_id).cancel()
+        bot.send_message.reset_mock()
+        notifier.deadline_passed(plan_id)
+        await asyncio.gather(*notifier._tasks)
+
+    asyncio.run(scenario())
+    markup = bot.send_message.await_args.kwargs["reply_markup"]
+    assert markup.inline_keyboard[0][0].callback_data == f"c:{plan_id}:2030-01-05T12:00"
+    assert "подходит 1 из 1" in bot.send_message.await_args.args[1]

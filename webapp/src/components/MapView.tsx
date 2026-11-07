@@ -48,7 +48,7 @@ export function MapView({
   places?: PlaceView[];
   people?: Person[];
   /** Результаты поиска: при каждом новом списке карта подстраивается под них. */
-  marks?: (LatLng & { label: string })[];
+  marks?: (LatLng & { label: string; selected?: boolean })[];
   center?: LatLng | null;
   focus?: LatLng | null;
   initialView?: LatLng | null;
@@ -105,8 +105,8 @@ export function MapView({
     if (center) {
       layer.add(
         new ymaps.Circle([toCoords(center), 900], {}, {
-          fillColor: '#007AFF14',
-          strokeColor: '#007AFF',
+          fillColor: '#BEFF5033',
+          strokeColor: '#14140F',
           strokeWidth: 2,
           strokeStyle: 'dash',
           interactivityModel: 'default#transparent',
@@ -129,18 +129,20 @@ export function MapView({
     }
 
     marks.forEach((m, i) => {
-      layer.add(htmlMark(ymaps, m, `<div class="pin">${escape(m.label)}</div>`, 15, { onClick: () => handlers.current.onMarkClick?.(i) }));
+      const html = `<div class="pin${m.selected ? ' sel' : ''}">${escape(m.label)}</div>`;
+      layer.add(htmlMark(ymaps, m, html, m.selected ? 22 : 16, { onClick: () => handlers.current.onMarkClick?.(i) }));
     });
 
     // Подгоняем масштаб один раз — по местам, людям и центру, без отмеченной точки.
-    // Новые результаты поиска показываем всегда.
-    const fitMarks = marks.length > 0 && fittedMarks.current !== marks;
-    if (fitMarks) fittedMarks.current = marks;
+    // Новые результаты поиска показываем всегда; смена выбранного пина масштаб не трогает.
+    const markKey = marks.map((m) => `${m.lat},${m.lng}`).join(';');
+    const fitMarks = marks.length > 0 && fittedMarks.current !== markKey;
+    if (fitMarks) fittedMarks.current = markKey;
     const bounds = layer.getBounds();
     if ((!fitted.current || fitMarks) && bounds) {
       fitted.current = true;
       // Результаты поиска не должны оказаться под панелью со списком.
-      void map.setBounds(bounds, { checkZoomRange: true, zoomMargin: fitMarks ? [120, 40, 320, 40] : 48 }).then(() => {
+      void map.setBounds(bounds, { checkZoomRange: true, zoomMargin: 48 }).then(() => {
         if (map.getZoom() > 15) void map.setZoom(15);
       });
     }

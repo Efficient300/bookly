@@ -7,6 +7,7 @@ import { Create } from './screens/Create.tsx';
 import { Home } from './screens/Home.tsx';
 import { Places } from './screens/Places.tsx';
 import { PlanScreen } from './screens/PlanScreen.tsx';
+import { Ready } from './screens/Ready.tsx';
 import { Results } from './screens/Results.tsx';
 import { inTelegram, startParam, tg } from './telegram.ts';
 
@@ -28,6 +29,8 @@ function Screen({ route }: { route: Route }) {
       return <Create template={route.template} chatId={route.chatId} />;
     case 'plan':
       return <PlanScreen id={route.id} />;
+    case 'ready':
+      return <Ready id={route.id} posted={route.posted} />;
     case 'results':
       return <Results id={route.id} />;
     case 'places':
@@ -85,7 +88,7 @@ export function App() {
       <ToastProvider>
         {/* Вне Telegram нет нативной кнопки — показываем свою, для разработки в браузере. */}
         {!inTelegram && depth > 1 && (
-          <button type="button" className="btn-text" style={{ padding: '8px 16px 0', height: 36 }} onClick={goBack}>
+          <button type="button" className="btn-link" style={{ padding: '8px 16px 0', height: 36 }} onClick={goBack}>
             ← Назад
           </button>
         )}

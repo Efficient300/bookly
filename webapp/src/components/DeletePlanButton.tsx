@@ -27,7 +27,7 @@ export function DeletePlanButton({ id }: { id: string }) {
   }
 
   return (
-    <button type="button" className="btn-text danger" disabled={busy} onClick={remove}>
+    <button type="button" className="btn-link danger" disabled={busy} onClick={remove}>
       Удалить сходку
     </button>
   );

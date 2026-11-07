@@ -3,9 +3,9 @@ import { dayLabel } from '../../../shared/format.ts';
 import type { PlanView, Review } from '../../../shared/types.ts';
 import { api } from '../api.ts';
 import { DeletePlanButton } from '../components/DeletePlanButton.tsx';
-import { IconCheck, IconRepeat, IconStar } from '../components/icons.tsx';
+import { IconCheck, IconStar } from '../components/icons.tsx';
 import { PlanCover } from '../components/PlanCover.tsx';
-import { Avatar, BottomBar, MainButton, useToast } from '../components/ui.tsx';
+import { ActionBar, Avatar, useToast } from '../components/ui.tsx';
 import { useNav } from '../nav.tsx';
 import { haptic } from '../telegram.ts';
 
@@ -64,14 +64,14 @@ export function After({ plan, setPlan }: { plan: PlanView; setPlan: (p: PlanView
           </span>
         </PlanCover>
 
-        <div className="card row" style={{ flexDirection: 'row', padding: '12px 12px 12px 16px' }}>
+        <div className="card row-flex" style={{ flexDirection: 'row', alignItems: 'center' }}>
           <span className="grow" style={{ fontSize: 15, fontWeight: 500 }}>
             Встреча состоялась?
           </span>
-          <button type="button" className="chip sm" aria-pressed={review.happened} onClick={() => saveReview({ happened: true })}>
+          <button type="button" className="chip" aria-pressed={review.happened} onClick={() => saveReview({ happened: true })}>
             Да
           </button>
-          <button type="button" className="chip sm" aria-pressed={!review.happened} onClick={() => saveReview({ happened: false })}>
+          <button type="button" className="chip" aria-pressed={!review.happened} onClick={() => saveReview({ happened: false })}>
             Нет
           </button>
         </div>
@@ -100,7 +100,7 @@ export function After({ plan, setPlan }: { plan: PlanView; setPlan: (p: PlanView
                 <button
                   key={tag}
                   type="button"
-                  className="chip sm"
+                  className="chip"
                   aria-pressed={review.tags.includes(tag)}
                   onClick={() =>
                     saveReview({ tags: review.tags.includes(tag) ? review.tags.filter((t) => t !== tag) : [...review.tags, tag] })
@@ -120,7 +120,7 @@ export function After({ plan, setPlan }: { plan: PlanView; setPlan: (p: PlanView
             </h2>
             {!bill ? (
               <form
-                className="row"
+                className="row-flex"
                 onSubmit={(e) => {
                   e.preventDefault();
                   void run(() => api.setBill(plan.id, parseSum(total)));
@@ -137,21 +137,21 @@ export function After({ plan, setPlan }: { plan: PlanView; setPlan: (p: PlanView
                   value={total}
                   onChange={(e) => setTotal(e.target.value)}
                 />
-                <button type="submit" className="btn-small" style={{ height: 44, borderRadius: 12 }} disabled={!parseSum(total)}>
+                <button type="submit" className="btn small ink" style={{ height: 44, borderRadius: 12 }} disabled={!parseSum(total)}>
                   Счёт на мне
                 </button>
               </form>
             ) : (
               <>
-                <div className="row" style={{ justifyContent: 'space-between', alignItems: 'flex-end' }}>
+                <div className="row-flex" style={{ justifyContent: 'space-between', alignItems: 'flex-end' }}>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
                     <span className="caption">Общий счёт</span>
                     <span style={{ fontSize: 26, fontWeight: 600, letterSpacing: '-0.02em' }}>{money(bill.total)}</span>
                   </div>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 4, alignItems: 'flex-end' }}>
                     <span className="caption">Кто платил</span>
-                    <span className="row" style={{ fontSize: 15, fontWeight: 500 }}>
-                      {payer && <Avatar name={payer.name} seed={payer.id} photo={payer.photo} size={22} />}
+                    <span className="row-flex" style={{ fontSize: 15, fontWeight: 500 }}>
+                      {payer && <Avatar name={payer.name} photo={payer.photo} size={22} />}
                       {payer?.name ?? '—'}
                     </span>
                   </div>
@@ -166,15 +166,15 @@ export function After({ plan, setPlan }: { plan: PlanView; setPlan: (p: PlanView
                       const paid = bill.paid.includes(m.id);
                       const canMark = myId === bill.payerId || myId === m.id;
                       return (
-                        <div key={m.id} className="row" style={{ height: 44, gap: 10 }}>
-                          <Avatar name={m.name} seed={m.id} photo={m.photo} />
+                        <div key={m.id} className="row-flex" style={{ height: 44, gap: 10 }}>
+                          <Avatar name={m.name} photo={m.photo} />
                           <span className="grow" style={{ fontSize: 15, fontWeight: 500 }}>
                             {m.name}
                           </span>
                           {paid ? (
                             <button
                               type="button"
-                              className="pill accent"
+                              className="tag on"
                               style={{ border: 'none', height: 30, borderRadius: 10 }}
                               disabled={!canMark}
                               onClick={() => run(() => api.markPaid(plan.id, m.id, false))}
@@ -185,7 +185,7 @@ export function After({ plan, setPlan }: { plan: PlanView; setPlan: (p: PlanView
                           ) : canMark ? (
                             <button
                               type="button"
-                              className="btn-small outline"
+                              className="btn small secondary"
                               style={{ height: 30, fontSize: 13 }}
                               onClick={() => run(() => api.markPaid(plan.id, m.id, true))}
                             >
@@ -205,12 +205,7 @@ export function After({ plan, setPlan }: { plan: PlanView; setPlan: (p: PlanView
         {plan.isOwner && <DeletePlanButton id={plan.id} />}
       </main>
 
-      <BottomBar>
-        <MainButton onClick={repeat}>
-          <IconRepeat size={20} />
-          Повторить в том же составе
-        </MainButton>
-      </BottomBar>
+      <ActionBar main={{ label: 'Повторить в том же составе', onClick: repeat }} />
     </div>
   );
 }

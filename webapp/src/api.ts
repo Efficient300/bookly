@@ -1,4 +1,4 @@
-import type { Me, MePatch, NewPlace, NewPlan, PlanSummary, PlanView, Review } from '../../shared/types.ts';
+import type { FoundPlace, Me, MePatch, NewPlace, NewPlan, PlanSummary, PlanView, Review } from '../../shared/types.ts';
 import { askWriteAccess, askWriteAccessOnce, inTelegram, tg } from './telegram.ts';
 
 const BASE = String(import.meta.env.VITE_API_URL ?? '').replace(/\/$/, '');
@@ -55,6 +55,11 @@ export const api = {
   markPaid: (id: string, userId: number, paid: boolean) =>
     request<PlanView>('POST', `/api/plans/${id}/bill/paid`, { userId, paid }),
   review: (id: string, review: Review) => request<PlanView>('PUT', `/api/plans/${id}/review`, review),
+  searchPlaces: (text: string, near: { lat: number; lng: number }) =>
+    request<{ available: boolean; items: FoundPlace[] }>(
+      'GET',
+      `/api/places/search?${new URLSearchParams({ text, lat: String(near.lat), lng: String(near.lng) })}`,
+    ),
   icsUrl: (id: string) => `${BASE}/api/plans/${id}/event.ics`,
 };
 
@@ -65,8 +70,8 @@ export async function enableReminders(force = false): Promise<void> {
 }
 
 /** Ссылка, которую можно отправить вне Telegram-карточки. */
-export function planLink(id: string): string {
-  const bot = import.meta.env.VITE_BOT_USERNAME;
+export function planLink(id: string, botName?: string | null): string {
+  const bot = botName || import.meta.env.VITE_BOT_USERNAME;
   // Без короткого имени ссылка ведёт на главное Mini App бота.
   const app = import.meta.env.VITE_APP_SHORT_NAME ? `/${import.meta.env.VITE_APP_SHORT_NAME}` : '';
   return bot ? `https://t.me/${bot}${app}?startapp=p_${id}&mode=compact` : `${location.origin}/?startapp=p_${id}`;

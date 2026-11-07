@@ -1,23 +1,19 @@
 import type { ReactNode } from 'react';
 import type { Format } from '../../../shared/types.ts';
-import { FORMAT_THEME } from '../lib/themes.tsx';
+import { FORMAT_ICON } from '../lib/themes.tsx';
 
-/** Обложка сходки: цвет и большой значок зависят от формата. */
-export function PlanCover({ format, children }: { format: Format; children: ReactNode }) {
-  const { from, to, Icon } = FORMAT_THEME[format];
+/** Обложка сходки: сплошной лайм и значок формата, рисуется сразу. */
+export function PlanCover({ format, action, children }: { format: Format; action?: ReactNode; children: ReactNode }) {
+  const Icon = FORMAT_ICON[format];
   return (
-    <div className="cover" style={{ background: `linear-gradient(145deg, ${from}, ${to})` }}>
-      <Icon size={132} strokeWidth={1.4} className="cover-mark" />
+    <div className="cover">
+      <div className="cover-top">
+        <span className="cover-icon">
+          <Icon size={28} />
+        </span>
+        {action}
+      </div>
       {children}
     </div>
-  );
-}
-
-export function FormatTile({ format, muted = false }: { format: Format; muted?: boolean }) {
-  const { from, to, Icon } = FORMAT_THEME[format];
-  return (
-    <span className={muted ? 'tile small muted-tile' : 'tile small'} style={{ background: `linear-gradient(145deg, ${from}, ${to})` }}>
-      <Icon size={20} />
-    </span>
   );
 }

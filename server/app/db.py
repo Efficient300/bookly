@@ -32,6 +32,7 @@ CREATE TABLE IF NOT EXISTS plans (
   message_id         INTEGER,
   reminded_day       INTEGER NOT NULL DEFAULT 0,
   reminded_soon      INTEGER NOT NULL DEFAULT 0,
+  deadline_notified  INTEGER NOT NULL DEFAULT 0,
   bill               TEXT,           -- JSON: {"total":186,"payerId":1,"paid":[3]}
   created_at         TEXT NOT NULL
 );
@@ -88,7 +89,7 @@ def migrate(db: sqlite3.Connection) -> None:
     """Доводит старые базы до текущей схемы."""
     added = {
         "custom_places": {"lat": "REAL", "lng": "REAL"},
-        "plans": {"chat_id": "INTEGER", "message_id": "INTEGER"},
+        "plans": {"chat_id": "INTEGER", "message_id": "INTEGER", "deadline_notified": "INTEGER NOT NULL DEFAULT 0"},
         "users": {"photo_url": "TEXT"},
     }
     for table, columns in added.items():

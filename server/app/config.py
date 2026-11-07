@@ -35,6 +35,8 @@ class Config:
     places_path: str = _path("data/places.json")
     tz: str = "Asia/Tashkent"
     dev_mode: bool = False
+    # Ключ «API поиска по организациям» Яндекса: координаты найденных заведений.
+    yandex_search_key: str = ""
     # Сколько секунд считать initData свежими.
     init_data_ttl: int = 24 * 60 * 60
 
@@ -54,6 +56,7 @@ class Config:
             places_path=_path(env("PLACES_PATH", "data/places.json")),
             tz=env("TZ", "Asia/Tashkent"),
             dev_mode=env("DEV_MODE") == "1",
+            yandex_search_key=env("YANDEX_SEARCH_KEY", ""),
             init_data_ttl=int(env("INIT_DATA_TTL", str(24 * 60 * 60))),
         )
 

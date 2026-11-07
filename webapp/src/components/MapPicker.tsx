@@ -1,33 +1,38 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { Format, LatLng } from '../../../shared/types.ts';
-import { CITY_CENTER, hasSearch, resolvePlace, reverseGeocode, searchPlaces } from '../lib/ymaps.ts';
+import { CITY_CENTER, CITY_NAME, distanceLabel, hasSearch, reverseGeocode, searchPlaces } from '../lib/ymaps.ts';
 import type { FoundPlace } from '../lib/ymaps.ts';
 import { useNav } from '../nav.tsx';
 import { expandApp, getLocation, haptic } from '../telegram.ts';
-import { IconSearch, IconTarget } from './icons.tsx';
+import { IconSearch, IconTarget, IconX } from './icons.tsx';
 import { MapView } from './MapView.tsx';
+import { ActionBar } from './ui.tsx';
 
 const CATEGORIES = [
-  { label: 'Кафе', query: 'кафе и рестораны' },
-  { label: 'Кофейни', query: 'кофейни' },
-  { label: 'Бары', query: 'бары' },
-  { label: 'Развлечения', query: 'развлечения' },
-  { label: 'Парки', query: 'парки' },
+  { label: 'Рестораны', query: 'ресторан' },
+  { label: 'Чайханы', query: 'чайхана' },
+  { label: 'Кафе', query: 'кафе' },
+  { label: 'Кофейни', query: 'кофейня' },
+  { label: 'Фастфуд', query: 'фастфуд' },
+  { label: 'Бары', query: 'бар' },
 ];
 
 /** С какой категории начать поиск для формата встречи. */
-const FORMAT_CATEGORY: Partial<Record<Format, string>> = {
-  eat: 'кафе и рестораны',
-  coffee: 'кофейни',
-  bar: 'бары',
-  active: 'развлечения',
-  walk: 'парки',
+const FORMAT_QUERY: Partial<Record<Format, string>> = {
+  eat: 'ресторан',
+  coffee: 'кофейня',
+  bar: 'бар',
+  active: 'боулинг',
+  walk: 'парк',
+  any: 'кафе',
 };
 
 const POINT_NAME = 'Точка на карте';
 
-/** Выбор места внутри Mini App: поиск Яндекса, метки на карте и точка нажатием. */
+export type PickedPlace = FoundPlace & LatLng;
+
+/** Выбор места внутри Mini App: поиск по городу, номерные пины, расстояние, выбор в одно касание. */
 export function MapPicker({
   format,
   near,
@@ -38,22 +43,23 @@ export function MapPicker({
   format: Format;
   near: LatLng | null;
   initial: LatLng | null;
-  onSelect: (place: FoundPlace & LatLng) => void;
+  onSelect: (place: PickedPlace) => void;
   onClose: () => void;
 }) {
   const nav = useNav();
   const start = initial ?? near ?? CITY_CENTER;
   const center = useRef<LatLng>(start);
   const request = useRef(0);
-  const [query, setQuery] = useState(() => (hasSearch ? (FORMAT_CATEGORY[format] ?? '') : ''));
+  const [query, setQuery] = useState(() => (hasSearch ? (FORMAT_QUERY[format] ?? '') : ''));
   const [results, setResults] = useState<FoundPlace[]>([]);
+  const [withPoints, setWithPoints] = useState(true);
   const [searching, setSearching] = useState(false);
   const [failed, setFailed] = useState(false);
   const [selected, setSelected] = useState<FoundPlace | null>(null);
   const [focus, setFocus] = useState<LatLng | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
-  // На карте тесно в половине экрана; «Назад» закрывает выбор, а не экран под ним.
+  // Форма под картой не перемонтируется: карта открывается поверх, «Назад» закрывает только её.
   useEffect(() => {
     expandApp();
     nav.setOverlayBack(() => {
@@ -80,7 +86,8 @@ export function MapPicker({
       searchPlaces(text, center.current)
         .then((found) => {
           if (id !== request.current) return;
-          setResults(found);
+          setResults(found.places);
+          setWithPoints(found.withPoints);
           setFailed(false);
         })
         .catch(() => {
@@ -91,38 +98,39 @@ export function MapPicker({
         .finally(() => {
           if (id === request.current) setSearching(false);
         });
-    }, 350);
+    }, 300);
     return () => clearTimeout(timer);
   }, [query]);
 
   const marks = useMemo(
-    () => results.flatMap((r, i) => (r.lat !== null && r.lng !== null ? [{ lat: r.lat, lng: r.lng, label: String(i + 1) }] : [])),
-    [results],
+    () =>
+      results.flatMap((r, i) =>
+        r.lat !== null && r.lng !== null ? [{ lat: r.lat, lng: r.lng, label: String(i + 1), selected: r === selected }] : [],
+      ),
+    [results, selected],
   );
-  const point = selected && selected.lat !== null && selected.lng !== null ? { ...selected, lat: selected.lat, lng: selected.lng } : null;
+  const point: PickedPlace | null = selected && selected.lat !== null && selected.lng !== null ? { ...selected, lat: selected.lat, lng: selected.lng } : null;
 
-  async function choose(place: FoundPlace) {
+  function choose(place: FoundPlace) {
     haptic.select();
-    const id = ++request.current;
+    ++request.current;
     setSelected(place);
-    const full = await resolvePlace(place);
-    if (id !== request.current) return;
-    setSelected(full);
-    if (full.lat !== null && full.lng !== null) setFocus({ lat: full.lat, lng: full.lng });
+    if (place.lat !== null && place.lng !== null) setFocus({ lat: place.lat, lng: place.lng });
   }
 
-  function pickPoint(point: LatLng) {
+  function pickPoint(p: LatLng) {
     haptic.select();
-    const id = ++request.current;
-    setSearching(false);
-    // Выбранная подсказка без координат получает точку, которую поставил человек.
+    // Подсказка без координат получает точку, которую поставил человек.
     if (selected && selected.lat === null) {
-      setSelected({ ...selected, ...point });
+      setSelected({ ...selected, ...p });
       return;
     }
-    setSelected({ ...point, name: POINT_NAME, address: null });
-    void reverseGeocode(point).then((name) => {
-      if (name && id === request.current) setSelected({ ...point, name, address: null });
+    const id = ++request.current;
+    setSearching(false);
+    const own: FoundPlace = { ...p, name: POINT_NAME, address: null, distance: null };
+    setSelected(own);
+    void reverseGeocode(p).then((name) => {
+      if (name && id === request.current) setSelected({ ...own, name });
     });
   }
 
@@ -137,53 +145,46 @@ export function MapPicker({
     pickPoint(here);
   }
 
-  let hint = 'Нажмите на карту, чтобы поставить точку';
-  if (!hasSearch) hint = 'Нажмите на карту, чтобы поставить точку. Поиск заработает с ключом Яндекс Карт.';
-  else if (failed) hint = 'Поиск сейчас не отвечает. Поставьте точку на карте.';
-  else if (searching) hint = 'Ищем…';
-  else if (query.trim().length >= 2) hint = 'Ничего не нашли. Измените запрос или поставьте точку на карте.';
+  let status: string | null = null;
+  if (notice) status = notice;
+  else if (!hasSearch) status = 'Поиск не подключён. Нажмите на карту, чтобы поставить точку.';
+  else if (failed) status = 'Поиск сейчас не отвечает. Поставьте точку на карте.';
+  else if (searching) status = 'Ищем…';
+  else if (query.trim().length >= 2 && results.length === 0) status = 'Ничего не нашли рядом. Измените запрос или поставьте точку на карте.';
+  else if (query.trim().length < 2) status = 'Найдите заведение или нажмите на карту.';
+
+  const needsPoint = selected !== null && selected.lat === null;
 
   return createPortal(
     <div className="picker" role="dialog" aria-modal="true" aria-label="Выбор места">
-      <MapView
-        className="map picker-map"
-        initialView={start}
-        marks={marks}
-        pick={point}
-        focus={focus}
-        onMoveEnd={(c) => {
-          center.current = c;
-        }}
-        onPick={pickPoint}
-        onMarkClick={(i) => void choose(results.filter((r) => r.lat !== null)[i])}
-      />
-
-      <div className="picker-top">
-        <div className="row">
-          <label className="search-field grow">
-            <IconSearch size={17} />
-            <span className="sr-only">Поиск места</span>
-            <input
-              value={query}
-              placeholder="Поиск места или адреса"
-              enterKeyHint="search"
-              onChange={(e) => {
-                setSelected(null);
-                setQuery(e.target.value);
-              }}
-            />
-          </label>
-          <button type="button" className="btn-plain" onClick={onClose}>
-            Отмена
+      <div className="picker-head">
+        <div className="row-flex" style={{ justifyContent: 'space-between' }}>
+          <h2 className="section-title">Выбор места</h2>
+          <button type="button" className="icon-btn" aria-label="Закрыть" onClick={onClose}>
+            <IconX size={20} />
           </button>
         </div>
+        <label className="search">
+          <IconSearch size={20} />
+          <span className="sr-only">Поиск места</span>
+          <input
+            value={query}
+            placeholder="Плов, лагман, кофейня…"
+            enterKeyHint="search"
+            onChange={(e) => {
+              setSelected(null);
+              setQuery(e.target.value);
+            }}
+          />
+          <span className="city">{CITY_NAME}</span>
+        </label>
         {hasSearch && (
-          <div className="chips scroll">
+          <div className="chips strip" style={{ margin: '0 -16px', padding: '0 16px' }}>
             {CATEGORIES.map((c) => (
               <button
                 key={c.query}
                 type="button"
-                className="chip sm glass"
+                className="chip"
                 aria-pressed={query === c.query}
                 onClick={() => {
                   haptic.select();
@@ -198,47 +199,51 @@ export function MapPicker({
         )}
       </div>
 
-      <section className="picker-panel">
-        <div className="handle" aria-hidden="true" />
-        <button type="button" className="map-locate" onClick={locate} aria-label="Моё местоположение">
+      <div style={{ position: 'relative', flex: 1, display: 'flex' }}>
+        <MapView
+          className="map picker-map"
+          initialView={start}
+          marks={marks}
+          pick={point && !(withPoints && selected && results.includes(selected)) ? point : null}
+          focus={focus}
+          onMoveEnd={(c) => {
+            center.current = c;
+          }}
+          onPick={pickPoint}
+          onMarkClick={(i) => choose(results.filter((r) => r.lat !== null)[i])}
+        />
+        <button type="button" className="icon-btn locate" onClick={locate} aria-label="Моё местоположение">
           <IconTarget size={20} />
         </button>
-        {selected ? (
-          <div className="picker-selected">
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-              <div style={{ fontSize: 20, fontWeight: 600 }}>{selected.name}</div>
-              {selected.address && <div className="caption">{selected.address}</div>}
-            </div>
-            {point ? (
-              <button type="button" className="btn-main" onClick={() => onSelect(point)}>
-                Выбрать это место
-              </button>
-            ) : (
-              <div className="pick-hint" role="status">
-                Нажмите на карту, где находится это место
-              </div>
-            )}
-          </div>
-        ) : results.length > 0 ? (
-          <div className="picker-results">
-            {results.map((r, i) => (
-              <button key={`${r.lat},${r.lng},${i}`} type="button" className="list-row" onClick={() => void choose(r)}>
-                <span className="place-num" aria-hidden="true">
-                  {i + 1}
-                </span>
-                <span className="grow" style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                  <span className="list-title">{r.name}</span>
-                  {r.address && <span className="caption">{r.address}</span>}
-                </span>
-              </button>
-            ))}
-          </div>
-        ) : (
-          <div className="caption" role="status" style={{ padding: '8px 4px 12px', fontSize: 15 }}>
-            {notice ?? hint}
-          </div>
+      </div>
+
+      <div className="picker-list">
+        {results.length > 0 && !withPoints && (
+          <div className="picker-status">Координат у подсказок нет: выберите место и нажмите на карту, где оно находится.</div>
         )}
-      </section>
+        {results.map((r, i) => (
+          <button key={`${r.name}-${i}`} type="button" className="row" aria-pressed={selected === r || (selected?.name === r.name && selected?.address === r.address)} onClick={() => choose(r)}>
+            <span className="place-num" aria-hidden="true">
+              {i + 1}
+            </span>
+            <span className="lbl">
+              <span>{r.name}</span>
+              {r.address && <span className="sub">{r.address}</span>}
+            </span>
+            {r.distance !== null && <span className="distance">{distanceLabel(r.distance)}</span>}
+          </button>
+        ))}
+        {status && results.length === 0 && <div className="picker-status">{status}</div>}
+      </div>
+
+      <ActionBar
+        note={needsPoint ? 'Нажмите на карту, где находится это место' : null}
+        main={{
+          label: point ? `Выбрать «${point.name}»` : 'Выберите место',
+          disabled: !point,
+          onClick: () => point && onSelect(point),
+        }}
+      />
     </div>,
     document.body,
   );

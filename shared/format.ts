@@ -14,13 +14,13 @@ export const FORMAT_LABELS: Record<Format, string> = {
 
 /** Бюджет на человека в сумах. Те же границы на сервере: server/app/places.py. */
 export const BUDGET_LABELS: Record<Budget, string> = {
-  '1': 'до 100 тыс',
-  '2': 'до 250 тыс',
-  '3': 'до 500 тыс',
+  '1': 'до 100 000',
+  '2': 'до 250 000',
+  '3': 'до 500 000',
   any: 'Любой',
 };
 
-/** «до 250 тыс сум»; для «Любой» — null, чтобы не показывать. */
+/** «до 250 000 сум»; для «Любой» — null, чтобы не показывать. */
 export function budgetLabel(budget: Budget): string | null {
   return budget === 'any' ? null : `${BUDGET_LABELS[budget]} сум`;
 }
@@ -33,8 +33,8 @@ export function avgCheckLabel(sum: number | null): string | null {
 }
 
 export const DURATION_LABELS: Record<Duration, string> = {
-  '1-2': '1–2 ч',
-  '2-3': '2–3 ч',
+  '1-2': '1–2 часа',
+  '2-3': '2–3 часа',
   evening: 'Весь вечер',
 };
 

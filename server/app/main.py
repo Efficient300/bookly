@@ -33,7 +33,13 @@ def build(cfg: Config):
             await setup_menu_button(bot_app.bot, cfg)
             await setup_commands(bot_app.bot)
             await bot_app.updater.start_polling(
-                allowed_updates=[Update.MESSAGE, Update.INLINE_QUERY, Update.CHOSEN_INLINE_RESULT, Update.MY_CHAT_MEMBER]
+                allowed_updates=[
+                    Update.MESSAGE,
+                    Update.INLINE_QUERY,
+                    Update.CHOSEN_INLINE_RESULT,
+                    Update.MY_CHAT_MEMBER,
+                    Update.CALLBACK_QUERY,
+                ]
             )
             scheduler = asyncio.create_task(run_scheduler(service, service.notifier))
             log.info("Бот @%s запущен", bot_app.bot.username)
